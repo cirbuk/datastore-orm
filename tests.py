@@ -69,7 +69,12 @@ def test_dotted_dict_to_object():
         "prices.last_revised": [datetime.utcnow(), datetime.utcnow()],
         "prices.currency": ["USD", "EUR"]
     }
-    return Car._dotted_dict_to_object(dict_)
+    from timeit import default_timer as timer
+    start = timer()
+    car = Car._dotted_dict_to_object(dict_)
+    print(timer() - start)
+    car = Car._dotted_dict_to_object(dict_)
+    print(timer() - start)
 
 
 def test_put():
@@ -87,5 +92,6 @@ def test_query():
 
 
 if __name__ == '__main__':
-    test_put()
-    test_query()
+    # test_put()
+    # test_query()
+    test_dotted_dict_to_object()

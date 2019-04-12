@@ -315,3 +315,7 @@ class BaseModel:
         if "namespace" not in kwargs:
             kwargs["namespace"] = cls.client.namespace
         return CustomQuery(cls, client=cls.client, kind=cls.__name__, **kwargs)
+
+    @classmethod
+    def _sample(cls):
+        raise NotImplementedError("_sample must be implemented by the subclass")

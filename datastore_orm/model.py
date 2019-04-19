@@ -2,6 +2,9 @@ from google.cloud import datastore
 from google.cloud.datastore import Query
 from google.cloud.datastore.query import Iterator
 from google.cloud.datastore import helpers
+from google.cloud.datastore import Key
+import copy
+import abc
 
 
 class CustomIterator(Iterator):
@@ -86,8 +89,7 @@ class CustomIterator(Iterator):
                 if value_pb.exclude_from_indexes:
                     exclude_from_indexes.append(prop_name)
 
-        obj = self.model_type._dotted_dict_to_object(entity_props)
-        obj._key_ = key
+        obj = self.model_type._dotted_dict_to_object(entity_props, key)
         return obj
 
     def _item_to_object(self, iterator, entity_pb):
@@ -104,6 +106,56 @@ class CustomIterator(Iterator):
         :returns: The next entity in the page.
         """
         return self.object_from_protobuf(entity_pb)
+
+    def key_from_protobuf(self, pb):
+        """Factory method for creating a key based on a protobuf.
+
+        The protobuf should be one returned from the Cloud Datastore
+        Protobuf API.
+
+        :type pb: :class:`.entity_pb2.Key`
+        :param pb: The Protobuf representing the key.
+
+        :rtype: :class:`google.cloud.datastore.key.Key`
+        :returns: a new `Key` instance
+        """
+        path_args = []
+        for element in pb.path:
+            path_args.append(element.kind)
+            if element.id:  # Simple field (int64)
+                path_args.append(element.id)
+            # This is safe: we expect proto objects returned will only have
+            # one of `name` or `id` set.
+            if element.name:  # Simple field (string)
+                path_args.append(element.name)
+
+        project = None
+        if pb.partition_id.project_id:  # Simple field (string)
+            project = pb.partition_id.project_id
+        namespace = None
+        if pb.partition_id.namespace_id:  # Simple field (string)
+            namespace = pb.partition_id.namespace_id
+
+        return CustomKey(*path_args)
+
+
+class CustomKey(Key):
+
+    _client: datastore.Client
+    _type: object
+
+    def __init__(self, *path_args, **kwargs):
+        if not getattr(self, '_client', None):
+            raise ValueError("Datastore _client is not set. Have you called datastore_orm.initialize()?")
+        kwargs['namespace'] = self._client.namespace
+        kwargs['project'] = self._client.project
+        super(CustomKey, self).__init__(*path_args, **kwargs)
+
+    def get(self):
+        entity = self._client.get(self)
+        obj = self._type._dotted_dict_to_object(dict(entity.items()))
+        obj.key = entity.key
+        return obj
 
 
 class CustomQuery(Query):
@@ -131,8 +183,8 @@ class CustomQuery(Query):
         For example::
 
           >>> from google.cloud import datastore
-          >>> client = datastore.Client()
-          >>> query = client.query(kind='Person')
+          >>> _client = datastore.Client()
+          >>> query = _client.query(kind='Person')
           >>> query.add_filter('name', '=', 'Sally')
           >>> list(query.fetch())
           [<Entity object>, <Entity object>, ...]
@@ -152,7 +204,7 @@ class CustomQuery(Query):
         :param end_cursor: (Optional) cursor passed through to the iterator.
 
         :type client: :class:`google.cloud.datastore.client.Client`
-        :param client: (Optional) client used to connect to datastore.
+        :param client: (Optional) _client used to connect to datastore.
                        If not supplied, uses the query's value.
 
         :type eventual: bool
@@ -180,18 +232,20 @@ class CustomQuery(Query):
         )
 
 
-class BaseModel:
+class BaseModel(metaclass=abc.ABCMeta):
     """Typically, users will iteract with this library by creating sub-classes of BaseModel.
 
     BaseModel implements various helper methods (such as put, fetch etc.) to allow the user to
     interact with datastore directly from the subclass object.
     """
 
-    client: datastore.Client
+    _client: datastore.Client
+    _exclude_from_indexes_: tuple
 
     @classmethod
     def __init__(cls, client=None):
-        cls.client = client
+        cls._exclude_from_indexes_ = tuple()
+        cls._client = client
 
     def dottify(self, base_name):
         """Convert a standard BaseModel object with nested objects into dot notation to maintain
@@ -218,7 +272,7 @@ class BaseModel:
         return dotted_dict
 
     @classmethod
-    def _dotted_dict_to_object(cls, dict_: dict):
+    def _dotted_dict_to_object(cls, dict_: dict, key: Key = None):
         """Convert a dictionary that was created with dottify() back into a standard BaseModel object
 
         >>> dict_ = {
@@ -253,34 +307,45 @@ class BaseModel:
                 class_dict[class_] = class_dict.get(class_) or dict()
                 class_dict[class_][prop_key] = val
 
+        sample = None
+        try:
+            if cls._class_mapping:
+                sample = cls._class_mapping
+        except:
+            sample = cls._factory()
         for class_, nested_prop in class_dict.items():
             if isinstance(nested_prop, list):
                 nested_prop_list = []
                 for each_nested_prop in nested_prop:
-                    sample = cls._sample()
                     nested_prop_list.append(type(getattr(sample, class_)[0])(**each_nested_prop))
                 dict_[class_] = nested_prop_list
             else:
-                sample = cls._sample()
                 dict_[class_] = type(getattr(sample, class_))(**nested_prop)
-        return cls(**dict_)
+
+        obj = cls(**dict_)
+        if key:
+            obj.key = key
+        return obj
+
+    @classmethod
+    def from_entity(cls, entity):
+        return cls._dotted_dict_to_object(dict(entity.items()), entity.key)
 
     def _to_entity(self):
         """Converts a BaseModel subclass object into datastore entity. This method is called just before
-        datastore's client.put is called.
+        datastore's _client.put is called.
         """
-        obj_dict = vars(self)
+        obj_dict = copy.deepcopy(vars(self))
         exclude_from_indexes = ()
         try:
             exclude_from_indexes = self._exclude_from_indexes_
         except AttributeError:
             pass
 
-        key = self.client.key(self.__class__.__name__)
         try:
-            key = self._key_
+            key = self.key
         except AttributeError:
-            pass
+            key = CustomKey(self.__class__.__name__)
 
         entity = datastore.Entity(key=key, exclude_from_indexes=exclude_from_indexes)
         for dict_key, dict_val in obj_dict.copy().items():
@@ -307,15 +372,27 @@ class BaseModel:
         """
         Put the object into datastore.
         """
-        self.client.put(self._to_entity())
+        entity = self._to_entity()
+        self._client.put(entity)
+        entity.key._type = self.__class__
+        self.key = entity.key
+        return entity.key
+
+    def to_dict(self, exclude=None):
+        return {k: v for k, v in vars(self).items() if k not in exclude}
 
     @classmethod
     def query(cls, **kwargs) -> CustomQuery:
-        kwargs["project"] = cls.client.project
+        kwargs["project"] = cls._client.project
         if "namespace" not in kwargs:
-            kwargs["namespace"] = cls.client.namespace
-        return CustomQuery(cls, client=cls.client, kind=cls.__name__, **kwargs)
+            kwargs["namespace"] = cls._client.namespace
+        return CustomQuery(cls, client=cls._client, kind=cls.__name__, **kwargs)
 
     @classmethod
-    def _sample(cls):
-        raise NotImplementedError("_sample must be implemented by the subclass")
+    def _factory(cls):
+        raise NotImplementedError("_factory method must be implemented")
+
+
+def initialize(client):
+    BaseModel._client = client
+    CustomKey._client = client

@@ -55,39 +55,10 @@ class CustomIterator(Iterator):
             key = helpers.key_from_protobuf(pb.key)
 
         entity_props = {}
-        entity_meanings = {}
-        exclude_from_indexes = []
 
         for prop_name, value_pb in helpers._property_tuples(pb):
             value = helpers._get_value_from_value_pb(value_pb)
             entity_props[prop_name] = value
-
-            # Check if the property has an associated meaning.
-            is_list = isinstance(value, list)
-            meaning = helpers._get_meaning(value_pb, is_list=is_list)
-            if meaning is not None:
-                entity_meanings[prop_name] = (meaning, value)
-
-            # Check if ``value_pb`` was excluded from index. Lists need to be
-            # special-cased and we require all ``exclude_from_indexes`` values
-            # in a list agree.
-            if is_list and len(value) > 0:
-                exclude_values = set(
-                    value_pb.exclude_from_indexes
-                    for value_pb in value_pb.array_value.values
-                )
-                if len(exclude_values) != 1:
-                    raise ValueError(
-                        "For an array_value, subvalues must either "
-                        "all be indexed or all excluded from "
-                        "indexes."
-                    )
-
-                if exclude_values.pop():
-                    exclude_from_indexes.append(prop_name)
-            else:
-                if value_pb.exclude_from_indexes:
-                    exclude_from_indexes.append(prop_name)
 
         obj = self.model_type._dotted_dict_to_object(entity_props, key)
         return obj
@@ -128,13 +99,6 @@ class CustomIterator(Iterator):
             # one of `name` or `id` set.
             if element.name:  # Simple field (string)
                 path_args.append(element.name)
-
-        project = None
-        if pb.partition_id.project_id:  # Simple field (string)
-            project = pb.partition_id.project_id
-        namespace = None
-        if pb.partition_id.namespace_id:  # Simple field (string)
-            namespace = pb.partition_id.namespace_id
 
         return CustomKey(*path_args)
 
@@ -268,7 +232,8 @@ class BaseModel(metaclass=abc.ABCMeta):
         obj_dict = vars(self)
         dotted_dict = {}
         for k, v in obj_dict.items():
-            dotted_dict[base_name + '.' + k] = v
+            if v is not None:
+                dotted_dict[base_name + '.' + k] = v
         return dotted_dict
 
     @classmethod
@@ -307,10 +272,11 @@ class BaseModel(metaclass=abc.ABCMeta):
                 class_dict[class_] = class_dict.get(class_) or dict()
                 class_dict[class_][prop_key] = val
 
-        sample = None
         try:
             if cls._class_mapping:
                 sample = cls._class_mapping
+            else:
+                raise Exception()
         except:
             sample = cls._factory()
         for class_, nested_prop in class_dict.items():
@@ -322,7 +288,8 @@ class BaseModel(metaclass=abc.ABCMeta):
             else:
                 dict_[class_] = type(getattr(sample, class_))(**nested_prop)
 
-        obj = cls(**dict_)
+        filtered_dict = {k: v for k, v in dict_.items() if k in vars(sample)}
+        obj = cls(**filtered_dict)
         if key:
             obj.key = key
         return obj
@@ -349,11 +316,14 @@ class BaseModel(metaclass=abc.ABCMeta):
 
         entity = datastore.Entity(key=key, exclude_from_indexes=exclude_from_indexes)
         for dict_key, dict_val in obj_dict.copy().items():
-            if isinstance(dict_val, BaseModel):
-                del obj_dict[dict_key]
-                obj_dict.update(dict_val.dottify(dict_key))
-            if isinstance(dict_val, list):
-                if isinstance(dict_val[0], BaseModel):
+            if dict_val is not None:
+                if isinstance(dict_val, BaseModel):
+                    # If the value is an instance of BaseModel, convert the instance
+                    # into a "dotted" dictionary compatible with NDB entities.
+                    del obj_dict[dict_key]
+                    obj_dict.update(dict_val.dottify(dict_key))
+                if isinstance(dict_val, list) and len(dict_val) > 0 and isinstance(dict_val[0], BaseModel):
+                    # if the value is a list of BaseModel objects
                     dotted_dict_list = []
                     dotted_dict = dict()
                     for i, val in enumerate(dict_val):
@@ -365,6 +335,10 @@ class BaseModel(metaclass=abc.ABCMeta):
                             dotted_dict[k] = temp_val
                     del obj_dict[dict_key]
                     obj_dict.update(dotted_dict)
+            else:
+                # if the value is False-y i.e. the key has not been set in the object,
+                # delete the key from the object
+                del obj_dict[dict_key]
         entity.update(obj_dict)
         return entity
 
@@ -372,14 +346,34 @@ class BaseModel(metaclass=abc.ABCMeta):
         """
         Put the object into datastore.
         """
+
+        # TODO (Chaitanya): Directly convert object to protobuf and call PUT instead of converting to entity first.
         entity = self._to_entity()
         self._client.put(entity)
         entity.key._type = self.__class__
         self.key = entity.key
         return entity.key
 
-    def to_dict(self, exclude=None):
-        return {k: v for k, v in vars(self).items() if k not in exclude}
+    def delete(self):
+        """Delete object from datastore.
+        """
+        self._client.delete(self.key)
+
+    def to_dict(self, exclude: set = None):
+        exclude = (exclude or set()) | {'key'}
+        dict_ = {}
+        for k, v in vars(self).items():
+            if k not in exclude:
+                if isinstance(v, list) and len(v) > 0 and isinstance(v[0], BaseModel):
+                    temp_val = []
+                    for obj in v:
+                        temp_val.append(obj.to_dict())
+                    dict_[k] = temp_val
+                elif isinstance(v, BaseModel):
+                    dict_[k] = v.to_dict()
+                else:
+                    dict_[k] = v
+        return dict_
 
     @classmethod
     def query(cls, **kwargs) -> CustomQuery:

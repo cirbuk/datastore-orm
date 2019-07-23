@@ -39,15 +39,14 @@ class Price(BaseModel):
 @dataclass
 class Car(BaseModel):
     uid: str
-    brand: Brand
-    prices: List[Price]
     created_by: Key
+    brand: Brand = None
+    prices: List[Price] = None
 
     @classmethod
     def _factory(cls):
-        cls._class_mapping = Car(str(uuid4()), Brand._factory(), [Price._factory()],
-                                 created_by=CustomKey('User', 'test@test.com',
-                                                      project=CustomKey._client.project))
+        cls._class_mapping = Car(str(uuid4()), CustomKey('User', 'test@test.com', project=CustomKey._client.project),
+                                 Brand._factory(), [Price._factory()])
         return cls._class_mapping
 
 
@@ -68,14 +67,14 @@ def test_dotted_dict_to_object():
         "created_by": CustomKey('User', 'test@test.com')
     }
     car = Car._dotted_dict_to_object(dict_)
-    assert car == Car(uid, Brand(name='Mercedes', description='Generic luxury car',), [Price(9888, time1, 'USD'),
-                      Price(6785, time2, 'EUR')], created_by=CustomKey('User', 'test@test.com'))
+    assert car == Car(uid, brand=Brand(name='Mercedes', description='Generic luxury car',),
+                      prices=[Price(9888, time1, 'USD'), Price(6785, time2, 'EUR')],
+                      created_by=CustomKey('User', 'test@test.com'))
 
 
 def test_put():
-    car = Car(str(uuid4()), Brand("Mercedes", "Generic Brand"),
-              [Price(9888, datetime.utcnow(), "USD"), Price(6899, datetime.utcnow(), "GBP")],
-              created_by=CustomKey("User", "test@test.com"))
+    car = Car(str(uuid4()), CustomKey("User", "test@test.com"),
+              prices=[Price(9888, datetime.utcnow(), "USD"), Price(6899, datetime.utcnow(), "GBP")])
     car_key = car.put()
     print(car_key.id)
     car_from_ds = car_key.get()

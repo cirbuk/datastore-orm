@@ -3,6 +3,7 @@ from google.cloud.datastore import Query
 from google.cloud.datastore.query import Iterator
 from google.cloud.datastore import helpers
 from google.cloud.datastore import Key
+from typing import get_type_hints
 import copy
 import abc
 
@@ -265,30 +266,24 @@ class BaseModel(metaclass=abc.ABCMeta):
             if isinstance(val, list):
                 class_dict[class_] = class_dict.get(class_) or list()
                 for i, each_val in enumerate(val):
-                    if len(class_dict[class_]) < i+1:
+                    if len(class_dict[class_]) < i + 1:
                         class_dict[class_].append(dict())
                     class_dict[class_][i][prop_key] = each_val
             else:
                 class_dict[class_] = class_dict.get(class_) or dict()
                 class_dict[class_][prop_key] = val
 
-        try:
-            if cls._class_mapping:
-                sample = cls._class_mapping
-            else:
-                raise Exception()
-        except:
-            sample = cls._factory()
+        type_hints = get_type_hints(cls)
         for class_, nested_prop in class_dict.items():
             if isinstance(nested_prop, list):
                 nested_prop_list = []
                 for each_nested_prop in nested_prop:
-                    nested_prop_list.append(type(getattr(sample, class_)[0])(**each_nested_prop))
+                    nested_prop_list.append(type_hints[class_].__args__[0](**each_nested_prop))
                 dict_[class_] = nested_prop_list
             else:
-                dict_[class_] = type(getattr(sample, class_))(**nested_prop)
+                dict_[class_] = type_hints[class_](**nested_prop)
 
-        filtered_dict = {k: v for k, v in dict_.items() if k in vars(sample)}
+        filtered_dict = {k: v for k, v in dict_.items() if k in type_hints}
         obj = cls(**filtered_dict)
         if key:
             obj.key = key
@@ -381,10 +376,6 @@ class BaseModel(metaclass=abc.ABCMeta):
         if "namespace" not in kwargs:
             kwargs["namespace"] = cls._client.namespace
         return CustomQuery(cls, client=cls._client, kind=cls.__name__, **kwargs)
-
-    @classmethod
-    def _factory(cls):
-        raise NotImplementedError("_factory method must be implemented")
 
 
 def initialize(client):

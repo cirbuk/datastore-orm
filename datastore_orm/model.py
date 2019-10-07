@@ -355,6 +355,8 @@ class BaseModel(metaclass=abc.ABCMeta):
         self._client.delete(self.key)
 
     def to_dict(self, exclude: set = None):
+        if type(exclude) == list:
+            exclude = set(exclude)
         exclude = (exclude or set()) | {'key'}
         dict_ = {}
         for k, v in vars(self).items():

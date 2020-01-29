@@ -3,9 +3,81 @@ from google.cloud.datastore import Query
 from google.cloud.datastore.query import Iterator
 from google.cloud.datastore import helpers
 from google.cloud.datastore import Key
+import datetime
 from typing import get_type_hints
+import typing
 import copy
 import abc
+
+
+class UTC(datetime.tzinfo):
+    """Basic UTC implementation.
+
+    Implementing a small surface area to avoid depending on ``pytz``.
+    """
+
+    _dst = datetime.timedelta(0)
+    _tzname = 'UTC'
+    _utcoffset = _dst
+
+    def dst(self, dt):  # pylint: disable=unused-argument
+        """Daylight savings time offset."""
+        return self._dst
+
+    def fromutc(self, dt):
+        """Convert a timestamp from (naive) UTC to this timezone."""
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=self)
+        return super(UTC, self).fromutc(dt)
+
+    def tzname(self, dt):  # pylint: disable=unused-argument
+        """Get the name of this timezone."""
+        return self._tzname
+
+    def utcoffset(self, dt):  # pylint: disable=unused-argument
+        """UTC offset of this timezone."""
+        return self._utcoffset
+
+    def __repr__(self):
+        return '<%s>' % (self._tzname,)
+
+    def __str__(self):
+        return self._tzname
+
+
+def pb_timestamp_to_datetime(timestamp_pb):
+    """Convert a Timestamp protobuf to a datetime object.
+
+    :type timestamp_pb: :class:`google.protobuf.timestamp_pb2.Timestamp`
+    :param timestamp_pb: A Google returned timestamp protobuf.
+
+    :rtype: :class:`datetime.datetime`
+    :returns: A UTC datetime object converted from a protobuf timestamp.
+    """
+    return (
+        _EPOCH +
+        datetime.timedelta(
+            seconds=timestamp_pb.seconds,
+            microseconds=(timestamp_pb.nanos / 1000.0),
+        )
+    )
+
+
+_EPOCH = datetime.datetime.utcfromtimestamp(0).replace(tzinfo=UTC())
+
+
+class SubclassMap:
+
+    _subclass_map: dict
+
+    @staticmethod
+    def get():
+        try:
+            return SubclassMap._subclass_map
+        except AttributeError:
+            subclasses = BaseModel.__subclasses__()
+            SubclassMap._subclass_map = {subclass.__name__: subclass for subclass in subclasses}
+            return SubclassMap._subclass_map
 
 
 class CustomIterator(Iterator):
@@ -53,16 +125,78 @@ class CustomIterator(Iterator):
         """
         key = None
         if pb.HasField("key"):  # Message field (Key)
-            key = helpers.key_from_protobuf(pb.key)
+            key = self.key_from_protobuf(pb.key)
+            key._type = SubclassMap.get()[key.kind]
 
         entity_props = {}
 
         for prop_name, value_pb in helpers._property_tuples(pb):
-            value = helpers._get_value_from_value_pb(value_pb)
+            value = self._get_value_from_value_pb(value_pb)
             entity_props[prop_name] = value
 
         obj = self.model_type._dotted_dict_to_object(entity_props, key)
         return obj
+
+    def _get_value_from_value_pb(self, value_pb):
+        """Given a protobuf for a Value, get the correct value.
+
+        The Cloud Datastore Protobuf API returns a Property Protobuf which
+        has one value set and the rest blank.  This function retrieves the
+        the one value provided.
+
+        Some work is done to coerce the return value into a more useful type
+        (particularly in the case of a timestamp value, or a key value).
+
+        :type value_pb: :class:`.entity_pb2.Value`
+        :param value_pb: The Value Protobuf.
+
+        :rtype: object
+        :returns: The value provided by the Protobuf.
+        :raises: :class:`ValueError <exceptions.ValueError>` if no value type
+                 has been set.
+        """
+        value_type = value_pb.WhichOneof('value_type')
+
+        if value_type == 'timestamp_value':
+            result = pb_timestamp_to_datetime(value_pb.timestamp_value)
+
+        elif value_type == 'key_value':
+            result = self.key_from_protobuf(value_pb.key_value)
+            result._type = SubclassMap.get()[result.kind]
+
+        elif value_type == 'boolean_value':
+            result = value_pb.boolean_value
+
+        elif value_type == 'double_value':
+            result = value_pb.double_value
+
+        elif value_type == 'integer_value':
+            result = value_pb.integer_value
+
+        elif value_type == 'string_value':
+            result = value_pb.string_value
+
+        elif value_type == 'blob_value':
+            result = value_pb.blob_value
+
+        elif value_type == 'entity_value':
+            result = self.entity_from_protobuf(value_pb.entity_value)
+
+        elif value_type == 'array_value':
+            result = [self._get_value_from_value_pb(value)
+                      for value in value_pb.array_value.values]
+
+        elif value_type == 'geo_point_value':
+            result = helpers.GeoPoint(value_pb.geo_point_value.latitude,
+                                      value_pb.geo_point_value.longitude)
+
+        elif value_type == 'null_value':
+            result = None
+        else:
+            raise ValueError('Value protobuf did not have any value set')
+
+        return result
+
 
     def _item_to_object(self, iterator, entity_pb):
         """Convert a raw protobuf entity to the native object.

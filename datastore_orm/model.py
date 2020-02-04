@@ -1,5 +1,5 @@
 from google.cloud import datastore
-from google.cloud.datastore import Query
+from google.cloud.datastore import Query, Client
 from google.cloud.datastore.query import Iterator
 from google.cloud.datastore import helpers
 from google.cloud.datastore import Key
@@ -7,6 +7,8 @@ import datetime
 from typing import get_type_hints
 import copy
 import abc
+
+_MAX_LOOPS = 128
 
 
 def get_custom_key_from_key(key):
@@ -26,6 +28,87 @@ def get_custom_key_from_key(key):
     key_custom = CustomIterator.key_from_protobuf(key.to_protobuf())
     key_custom._type = SubclassMap.get()[key_custom.kind]
     return key_custom
+
+
+def _extended_lookup(datastore_api, project, key_pbs,
+                     missing=None, deferred=None,
+                     eventual=False, transaction_id=None):
+    """Repeat lookup until all keys found (unless stop requested).
+
+    Helper function for :meth:`Client.get_multi`.
+
+    :type datastore_api:
+        :class:`google.cloud.datastore._http.HTTPDatastoreAPI`
+        or :class:`google.cloud.datastore_v1.gapic.DatastoreClient`
+    :param datastore_api: The datastore API object used to connect
+                          to datastore.
+
+    :type project: str
+    :param project: The project to make the request for.
+
+    :type key_pbs: list of :class:`.entity_pb2.Key`
+    :param key_pbs: The keys to retrieve from the datastore.
+
+    :type missing: list
+    :param missing: (Optional) If a list is passed, the key-only entity
+                    protobufs returned by the backend as "missing" will be
+                    copied into it.
+
+    :type deferred: list
+    :param deferred: (Optional) If a list is passed, the key protobufs returned
+                     by the backend as "deferred" will be copied into it.
+
+    :type eventual: bool
+    :param eventual: If False (the default), request ``STRONG`` read
+                     consistency.  If True, request ``EVENTUAL`` read
+                     consistency.
+
+    :type transaction_id: str
+    :param transaction_id: If passed, make the request in the scope of
+                           the given transaction.  Incompatible with
+                           ``eventual==True``.
+
+    :rtype: list of :class:`.entity_pb2.Entity`
+    :returns: The requested entities.
+    :raises: :class:`ValueError` if missing / deferred are not null or
+             empty list.
+    """
+    if missing is not None and missing != []:
+        raise ValueError('missing must be None or an empty list')
+
+    if deferred is not None and deferred != []:
+        raise ValueError('deferred must be None or an empty list')
+
+    results = []
+
+    loop_num = 0
+    read_options = helpers.get_read_options(eventual, transaction_id)
+    while loop_num < _MAX_LOOPS:  # loop against possible deferred.
+        loop_num += 1
+        lookup_response = datastore_api.lookup(
+            project,
+            key_pbs,
+            read_options=read_options,
+        )
+
+        # Accumulate the new results.
+        results.extend(result.entity for result in lookup_response.found)
+
+        if missing is not None:
+            missing.extend(result.entity for result in lookup_response.missing)
+
+        if deferred is not None:
+            deferred.extend(lookup_response.deferred)
+            break
+
+        if len(lookup_response.deferred) == 0:
+            break
+
+        # We have deferred keys, and the user didn't ask to know about
+        # them, so retry (but only with the deferred ones).
+        key_pbs = lookup_response.deferred
+
+    return results
 
 
 class UTC(datetime.tzinfo):
@@ -113,12 +196,14 @@ class CustomIterator(Iterator):
             end_cursor=None,
             eventual=False,
     ):
-        super(Iterator, self).__init__(
-            client=client,
-            item_to_value=self._item_to_object,
-            page_token=start_cursor,
-            max_results=limit,
-        )
+        # super(Iterator, self).__init__(
+        #     client=client,
+        #     item_to_value=self._item_to_object,
+        #     page_token=start_cursor,
+        #     max_results=limit,
+        # )
+        super(CustomIterator, self).__init__(query, client, limit=limit, offset=offset, start_cursor=start_cursor,
+                                             end_cursor=end_cursor, eventual=eventual)
 
         self.model_type: BaseModel = model_type
         self._query = query
@@ -129,7 +214,8 @@ class CustomIterator(Iterator):
         self._more_results = True
         self._skipped_results = 0
 
-    def object_from_protobuf(self, pb):
+    @staticmethod
+    def object_from_protobuf(pb, model_type=None):
         """Factory method for creating a python object based on a protobuf.
 
         The protobuf should be one returned from the Cloud Datastore
@@ -149,13 +235,14 @@ class CustomIterator(Iterator):
         entity_props = {}
 
         for prop_name, value_pb in helpers._property_tuples(pb):
-            value = self._get_value_from_value_pb(value_pb)
+            value = CustomIterator._get_value_from_value_pb(value_pb)
             entity_props[prop_name] = value
 
-        obj = self.model_type._dotted_dict_to_object(entity_props, key)
+        obj = model_type._dotted_dict_to_object(entity_props, key)
         return obj
 
-    def _get_value_from_value_pb(self, value_pb):
+    @staticmethod
+    def _get_value_from_value_pb(value_pb):
         """Given a protobuf for a Value, get the correct value.
 
         The Cloud Datastore Protobuf API returns a Property Protobuf which
@@ -198,10 +285,10 @@ class CustomIterator(Iterator):
             result = value_pb.blob_value
 
         elif value_type == 'entity_value':
-            result = self.entity_from_protobuf(value_pb.entity_value)
+            result = helpers.entity_from_protobuf(value_pb.entity_value)
 
         elif value_type == 'array_value':
-            result = [self._get_value_from_value_pb(value)
+            result = [CustomIterator._get_value_from_value_pb(value)
                       for value in value_pb.array_value.values]
 
         elif value_type == 'geo_point_value':
@@ -228,7 +315,7 @@ class CustomIterator(Iterator):
         :rtype: :class:`~google.cloud.datastore.entity.Entity`
         :returns: The next entity in the page.
         """
-        return self.object_from_protobuf(entity_pb)
+        return CustomIterator.object_from_protobuf(entity_pb, model_type=self.model_type)
 
     @staticmethod
     def key_from_protobuf(pb):
@@ -268,9 +355,9 @@ class CustomKey(Key):
         super(CustomKey, self).__init__(*path_args, **kwargs)
 
     def get(self):
-        entity = self._client.get(self)
-        obj = self._type._dotted_dict_to_object(dict(entity.items()))
-        obj.key = entity.key
+        obj = self._client.get(self, model_type=self._type)
+        # obj = self._type._dotted_dict_to_object(dict(entity.items()))
+        # obj.key = entity.key
         return obj
 
 
@@ -531,6 +618,129 @@ class BaseModel(metaclass=abc.ABCMeta):
         return CustomQuery(cls, client=cls._client, kind=cls.__name__, **kwargs)
 
 
+class CustomClient(Client):
+    _client: datastore.Client
+
+    def __init__(self, client=None):
+        self._client = client
+        if not getattr(self, '_client', None):
+            raise ValueError("Datastore _client is not set. Have you called datastore_orm.initialize()?")
+        super(CustomClient, self).__init__(project=self._client.project, namespace=self._client.namespace)
+
+    def get(self, key, missing=None, deferred=None,
+            transaction=None, eventual=False, model_type=None):
+        """Retrieve an entity from a single key (if it exists).
+
+        .. note::
+
+           This is just a thin wrapper over :meth:`get_multi`.
+           The backend API does not make a distinction between a single key or
+           multiple keys in a lookup request.
+
+        :type key: :class:`google.cloud.datastore.key.Key`
+        :param key: The key to be retrieved from the datastore.
+
+        :type missing: list
+        :param missing: (Optional) If a list is passed, the key-only entities
+                        returned by the backend as "missing" will be copied
+                        into it.
+
+        :type deferred: list
+        :param deferred: (Optional) If a list is passed, the keys returned
+                         by the backend as "deferred" will be copied into it.
+
+        :type transaction:
+            :class:`~google.cloud.datastore.transaction.Transaction`
+        :param transaction: (Optional) Transaction to use for read consistency.
+                            If not passed, uses current transaction, if set.
+
+        :type eventual: bool
+        :param eventual: (Optional) Defaults to strongly consistent (False).
+                         Setting True will use eventual consistency, but cannot
+                         be used inside a transaction or will raise ValueError.
+
+        :rtype: :class:`google.cloud.datastore.entity.Entity` or ``NoneType``
+        :returns: The requested entity if it exists.
+
+        :raises: :class:`ValueError` if eventual is True and in a transaction.
+        """
+        entities = self.get_multi(keys=[key],
+                                  missing=missing,
+                                  deferred=deferred,
+                                  transaction=transaction,
+                                  eventual=eventual, model_type=model_type)
+        if entities:
+            return entities[0]
+
+    def get_multi(self, keys, missing=None, deferred=None,
+                  transaction=None, eventual=False, model_type=None):
+        """Retrieve entities, along with their attributes.
+
+        :type keys: list of :class:`google.cloud.datastore.key.Key`
+        :param keys: The keys to be retrieved from the datastore.
+
+        :type missing: list
+        :param missing: (Optional) If a list is passed, the key-only entities
+                        returned by the backend as "missing" will be copied
+                        into it. If the list is not empty, an error will occur.
+
+        :type deferred: list
+        :param deferred: (Optional) If a list is passed, the keys returned
+                         by the backend as "deferred" will be copied into it.
+                         If the list is not empty, an error will occur.
+
+        :type transaction:
+            :class:`~google.cloud.datastore.transaction.Transaction`
+        :param transaction: (Optional) Transaction to use for read consistency.
+                            If not passed, uses current transaction, if set.
+
+        :type eventual: bool
+        :param eventual: (Optional) Defaults to strongly consistent (False).
+                         Setting True will use eventual consistency, but cannot
+                         be used inside a transaction or will raise ValueError.
+
+        :rtype: list of :class:`google.cloud.datastore.entity.Entity`
+        :returns: The requested entities.
+        :raises: :class:`ValueError` if one or more of ``keys`` has a project
+                 which does not match our project.
+        :raises: :class:`ValueError` if eventual is True and in a transaction.
+        """
+        if not keys:
+            return []
+
+        ids = set(key.project for key in keys)
+        for current_id in ids:
+            if current_id != self.project:
+                raise ValueError('Keys do not match project')
+
+        if transaction is None:
+            transaction = self.current_transaction
+
+        entity_pbs = _extended_lookup(
+            datastore_api=self._datastore_api,
+            project=self.project,
+            key_pbs=[key.to_protobuf() for key in keys],
+            eventual=eventual,
+            missing=missing,
+            deferred=deferred,
+            transaction_id=transaction and transaction.id,
+        )
+
+        if missing is not None:
+            missing[:] = [
+                CustomIterator.object_from_protobuf(missed_pb, model_type=model_type)
+                for missed_pb in missing]
+
+        if deferred is not None:
+            deferred[:] = [
+                CustomIterator.key_from_protobuf(deferred_pb)
+                for deferred_pb in deferred]
+
+        return [CustomIterator.object_from_protobuf(entity_pb, model_type=model_type)
+                for entity_pb in entity_pbs]
+
+
 def initialize(client):
-    BaseModel._client = client
-    CustomKey._client = client
+    custom_client = CustomClient(client=client)
+    BaseModel._client = custom_client
+    CustomKey._client = custom_client

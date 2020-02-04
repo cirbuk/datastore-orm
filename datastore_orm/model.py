@@ -8,8 +8,6 @@ from typing import get_type_hints
 import copy
 import abc
 
-_MAX_LOOPS = 128
-
 
 def get_custom_key_from_key(key):
     """
@@ -75,11 +73,11 @@ def pb_timestamp_to_datetime(timestamp_pb):
     :returns: A UTC datetime object converted from a protobuf timestamp.
     """
     return (
-        _EPOCH +
-        datetime.timedelta(
-            seconds=timestamp_pb.seconds,
-            microseconds=(timestamp_pb.nanos / 1000.0),
-        )
+            _EPOCH +
+            datetime.timedelta(
+                seconds=timestamp_pb.seconds,
+                microseconds=(timestamp_pb.nanos / 1000.0),
+            )
     )
 
 
@@ -87,7 +85,6 @@ _EPOCH = datetime.datetime.utcfromtimestamp(0).replace(tzinfo=UTC())
 
 
 class SubclassMap:
-
     _subclass_map: dict
 
     @staticmethod
@@ -104,16 +101,17 @@ class CustomIterator(Iterator):
     """CustomIterator overrides the default Iterator and defines a custom _item_to_object method
     in order to return BaseModel subclass objects instead of the default datastore entity
     """
+
     def __init__(
-        self,
-        model_type,
-        query,
-        client,
-        limit=None,
-        offset=None,
-        start_cursor=None,
-        end_cursor=None,
-        eventual=False,
+            self,
+            model_type,
+            query,
+            client,
+            limit=None,
+            offset=None,
+            start_cursor=None,
+            end_cursor=None,
+            eventual=False,
     ):
         super(Iterator, self).__init__(
             client=client,
@@ -217,7 +215,6 @@ class CustomIterator(Iterator):
 
         return result
 
-
     def _item_to_object(self, iterator, entity_pb):
         """Convert a raw protobuf entity to the native object.
 
@@ -260,7 +257,6 @@ class CustomIterator(Iterator):
 
 
 class CustomKey(Key):
-
     _client: datastore.Client
     _type: object
 
@@ -290,13 +286,13 @@ class CustomQuery(Query):
         self.model_type = model_type
 
     def fetch(
-        self,
-        limit=None,
-        offset=0,
-        start_cursor=None,
-        end_cursor=None,
-        client=None,
-        eventual=False,
+            self,
+            limit=None,
+            offset=0,
+            start_cursor=None,
+            end_cursor=None,
+            client=None,
+            eventual=False,
     ):
         """Execute the Query; return an iterator for the matching entities.
 

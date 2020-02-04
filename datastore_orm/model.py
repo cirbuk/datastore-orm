@@ -3,10 +3,8 @@ from google.cloud.datastore import Query
 from google.cloud.datastore.query import Iterator
 from google.cloud.datastore import helpers
 from google.cloud.datastore import Key
-from google.cloud.datastore import Client
 import datetime
 from typing import get_type_hints
-import typing
 import copy
 import abc
 

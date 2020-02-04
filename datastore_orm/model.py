@@ -3,11 +3,33 @@ from google.cloud.datastore import Query
 from google.cloud.datastore.query import Iterator
 from google.cloud.datastore import helpers
 from google.cloud.datastore import Key
+from google.cloud.datastore import Client
 import datetime
 from typing import get_type_hints
 import typing
 import copy
 import abc
+
+_MAX_LOOPS = 128
+
+
+def get_custom_key_from_key(key):
+    """
+    This method is to be called where ndb.Key().get() was being used.
+    This is because some properties of models are being fetched as Key instead of CustomKey
+    Once a Key is converted to CustomKey by this method, .get() function can be used similar
+    to ndb.Key()
+    :param key: datastore.Key
+    :return: CustomKey
+    >>> from google.cloud.datastore import Key
+    >>> from datastore_orm import get_custom_key_from_key
+    >>> key = Key('Kind','id_or_name')
+    >>> key_custom = get_custom_key_from_key(key)
+    >>> base_model_obj = key_custom.get()
+    """
+    key_custom = CustomIterator.key_from_protobuf(key.to_protobuf())
+    key_custom._type = SubclassMap.get()[key_custom.kind]
+    return key_custom
 
 
 class UTC(datetime.tzinfo):
@@ -125,7 +147,7 @@ class CustomIterator(Iterator):
         """
         key = None
         if pb.HasField("key"):  # Message field (Key)
-            key = self.key_from_protobuf(pb.key)
+            key = CustomIterator.key_from_protobuf(pb.key)
             key._type = SubclassMap.get()[key.kind]
 
         entity_props = {}
@@ -161,7 +183,7 @@ class CustomIterator(Iterator):
             result = pb_timestamp_to_datetime(value_pb.timestamp_value)
 
         elif value_type == 'key_value':
-            result = self.key_from_protobuf(value_pb.key_value)
+            result = CustomIterator.key_from_protobuf(value_pb.key_value)
             result._type = SubclassMap.get()[result.kind]
 
         elif value_type == 'boolean_value':
@@ -213,7 +235,8 @@ class CustomIterator(Iterator):
         """
         return self.object_from_protobuf(entity_pb)
 
-    def key_from_protobuf(self, pb):
+    @staticmethod
+    def key_from_protobuf(pb):
         """Factory method for creating a key based on a protobuf.
 
         The protobuf should be one returned from the Cloud Datastore
@@ -332,7 +355,7 @@ class CustomQuery(Query):
 
 
 class BaseModel(metaclass=abc.ABCMeta):
-    """Typically, users will iteract with this library by creating sub-classes of BaseModel.
+    """Typically, users will interact with this library by creating sub-classes of BaseModel.
 
     BaseModel implements various helper methods (such as put, fetch etc.) to allow the user to
     interact with datastore directly from the subclass object.

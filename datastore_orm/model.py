@@ -206,10 +206,10 @@ class CustomIterator(Iterator):
                                              end_cursor=end_cursor, eventual=eventual)
 
         self.model_type: BaseModel = model_type
-        self._query = query
-        self._offset = offset
-        self._end_cursor = end_cursor
-        self._eventual = eventual
+        # self._query = query
+        # self._offset = offset
+        # self._end_cursor = end_cursor
+        # self._eventual = eventual
         # The attributes below will change over the life of the iterator.
         self._more_results = True
         self._skipped_results = 0
@@ -423,7 +423,7 @@ class CustomQuery(Query):
         if client is None:
             client = self._client
 
-        return CustomIterator(
+        ci =  CustomIterator(
             self.model_type,
             self,
             client,
@@ -433,6 +433,7 @@ class CustomQuery(Query):
             end_cursor=end_cursor,
             eventual=eventual
         )
+        return ci
 
 
 class BaseModel(metaclass=abc.ABCMeta):
@@ -615,6 +616,7 @@ class BaseModel(metaclass=abc.ABCMeta):
         kwargs["project"] = cls._client.project
         if "namespace" not in kwargs:
             kwargs["namespace"] = cls._client.namespace
+        name = cls.__name__
         return CustomQuery(cls, client=cls._client, kind=cls.__name__, **kwargs)
 
 

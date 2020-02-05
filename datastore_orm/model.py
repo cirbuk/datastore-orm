@@ -196,20 +196,18 @@ class CustomIterator(Iterator):
             end_cursor=None,
             eventual=False,
     ):
-        # super(Iterator, self).__init__(
-        #     client=client,
-        #     item_to_value=self._item_to_object,
-        #     page_token=start_cursor,
-        #     max_results=limit,
-        # )
-        super(CustomIterator, self).__init__(query, client, limit=limit, offset=offset, start_cursor=start_cursor,
-                                             end_cursor=end_cursor, eventual=eventual)
+        super(Iterator, self).__init__(
+            client=client,
+            item_to_value=self._item_to_object,
+            page_token=start_cursor,
+            max_results=limit,
+        )
 
         self.model_type: BaseModel = model_type
-        # self._query = query
-        # self._offset = offset
-        # self._end_cursor = end_cursor
-        # self._eventual = eventual
+        self._query = query
+        self._offset = offset
+        self._end_cursor = end_cursor
+        self._eventual = eventual
         # The attributes below will change over the life of the iterator.
         self._more_results = True
         self._skipped_results = 0

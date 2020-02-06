@@ -358,6 +358,9 @@ class CustomKey(Key):
         # obj.key = entity.key
         return obj
 
+    def delete(self):
+        self._client.delete(self)
+
 
 class CustomQuery(Query):
     """CustomQuery class overrides the google.cloud.datastore.Query class in order to use a custom

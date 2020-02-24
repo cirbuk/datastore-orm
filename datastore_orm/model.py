@@ -667,11 +667,14 @@ class CustomClient(Client):
 
         :raises: :class:`ValueError` if eventual is True and in a transaction.
         """
+        start = datetime.datetime.now()
         entities = self.get_multi(keys=[key],
                                   missing=missing,
                                   deferred=deferred,
                                   transaction=transaction,
                                   eventual=eventual, model_type=model_type)
+        end = datetime.datetime.now()
+        print('Time taken for {} is {}'.format(__name__, end - start))
         if entities:
             return entities[0]
 

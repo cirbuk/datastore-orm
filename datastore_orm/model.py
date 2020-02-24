@@ -4,9 +4,13 @@ from google.cloud.datastore.query import Iterator
 from google.cloud.datastore import helpers
 from google.cloud.datastore import Key
 import datetime
+from datetime import date
 from typing import get_type_hints
 import copy
 import abc
+from redis import StrictRedis
+import json
+import pickle
 
 _MAX_LOOPS = 128
 
@@ -344,6 +348,7 @@ class CustomIterator(Iterator):
 class CustomKey(Key):
     _client: datastore.Client
     _type: object
+    _cache: StrictRedis
 
     def __init__(self, *path_args, **kwargs):
         if not getattr(self, '_client', None):
@@ -353,9 +358,22 @@ class CustomKey(Key):
         super(CustomKey, self).__init__(*path_args, **kwargs)
 
     def get(self):
+        start = datetime.datetime.now()
+        cache_key = 'datastore_orm.{}.{}'.format(self.kind, self.id_or_name)
+        if self._cache:
+            obj = self._cache.get(cache_key)
+            if obj:
+                # print('Cache hit')
+                end = datetime.datetime.now()
+                # print('Time taken for {} is {}'.format('cache hit', end - start))
+                return pickle.loads(obj)
+        # print('Cache miss')
         obj = self._client.get(self, model_type=self._type)
+        self._cache.set(cache_key, pickle.dumps(obj))
         # obj = self._type._dotted_dict_to_object(dict(entity.items()))
         # obj.key = entity.key
+        end = datetime.datetime.now()
+        # print('Time taken for {} is {}'.format('cache miss', end - start))
         return obj
 
     def delete(self):
@@ -424,7 +442,7 @@ class CustomQuery(Query):
         if client is None:
             client = self._client
 
-        ci =  CustomIterator(
+        ci = CustomIterator(
             self.model_type,
             self,
             client,
@@ -446,6 +464,7 @@ class BaseModel(metaclass=abc.ABCMeta):
 
     _client: datastore.Client
     _exclude_from_indexes_: tuple
+    _cache: StrictRedis
 
     @classmethod
     def __init__(cls, client=None):
@@ -584,6 +603,10 @@ class BaseModel(metaclass=abc.ABCMeta):
 
         # TODO (Chaitanya): Directly convert object to protobuf and call PUT instead of converting to entity first.
         entity = self._to_entity()
+        if self._cache:
+            # print('Using cache to put')
+            cache_key = 'datastore_orm.{}.{}'.format(self.__class__.__name__, self.key.id_or_name)
+            self._cache.set(cache_key, pickle.dumps(self))
         self._client.put(entity)
         entity.key._type = self.__class__
         self.key = entity.key
@@ -667,14 +690,11 @@ class CustomClient(Client):
 
         :raises: :class:`ValueError` if eventual is True and in a transaction.
         """
-        start = datetime.datetime.now()
         entities = self.get_multi(keys=[key],
                                   missing=missing,
                                   deferred=deferred,
                                   transaction=transaction,
                                   eventual=eventual, model_type=model_type)
-        end = datetime.datetime.now()
-        print('Time taken for {} is {}'.format(__name__, end - start))
         if entities:
             return entities[0]
 
@@ -746,7 +766,9 @@ class CustomClient(Client):
                 for entity_pb in entity_pbs]
 
 
-def initialize(client):
+def initialize(client, cache=None):
     custom_client = CustomClient(client=client)
     BaseModel._client = custom_client
+    BaseModel._cache = cache
     CustomKey._client = custom_client
+    CustomKey._cache = cache

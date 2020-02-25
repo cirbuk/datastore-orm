@@ -363,17 +363,17 @@ class CustomKey(Key):
         if self._cache:
             obj = self._cache.get(cache_key)
             if obj:
-                # print('Cache hit')
+                print('Cache hit')
                 end = datetime.datetime.now()
-                # print('Time taken for {} is {}'.format('cache hit', end - start))
+                print('Time taken for {} is {}'.format('cache hit', end - start))
                 return pickle.loads(obj)
-        # print('Cache miss')
+        print('Cache miss')
         obj = self._client.get(self, model_type=self._type)
         self._cache.set(cache_key, pickle.dumps(obj))
         # obj = self._type._dotted_dict_to_object(dict(entity.items()))
         # obj.key = entity.key
         end = datetime.datetime.now()
-        # print('Time taken for {} is {}'.format('cache miss', end - start))
+        print('Time taken for {} is {}'.format('cache miss', end - start))
         return obj
 
     def delete(self):
@@ -602,14 +602,16 @@ class BaseModel(metaclass=abc.ABCMeta):
         """
 
         # TODO (Chaitanya): Directly convert object to protobuf and call PUT instead of converting to entity first.
+        start = datetime.datetime.now()
         entity = self._to_entity()
         if self._cache:
-            print('Using cache to put')
             cache_key = 'datastore_orm.{}.{}'.format(self.__class__.__name__, entity.key.id_or_name)
             self._cache.set(cache_key, pickle.dumps(self))
         self._client.put(entity)
         entity.key._type = self.__class__
         self.key = entity.key
+        end = datetime.datetime.now()
+        print('Time taken for {} is {}'.format('datastore and cache put', end - start))
         return entity.key
 
     def delete(self):

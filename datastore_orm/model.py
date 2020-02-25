@@ -604,15 +604,15 @@ class BaseModel(metaclass=abc.ABCMeta):
         # TODO (Chaitanya): Directly convert object to protobuf and call PUT instead of converting to entity first.
         start = datetime.datetime.now()
         entity = self._to_entity()
-        if self._cache and use_cache:
-            cache_key = 'datastore_orm.{}.{}'.format(self.__class__.__name__, entity.key.id_or_name)
-            self._cache.set(cache_key, pickle.dumps(self))
+        # if self._cache and use_cache:
+        #     cache_key = 'datastore_orm.{}.{}'.format(self.__class__.__name__, entity.key.id_or_name)
+        #     self._cache.set(cache_key, pickle.dumps(self))
         self._client.put(entity)
         entity.key._type = self.__class__
         self.key = entity.key
-        end = datetime.datetime.now()
-        print('Using cache for put {}'.format(use_cache))
-        print('Time taken for {} is {}'.format('datastore and cache put', end - start))
+        # end = datetime.datetime.now()
+        # print('Using cache for put {}'.format(use_cache))
+        # print('Time taken for {} is {}'.format('datastore and cache put', end - start))
         return entity.key
 
     def delete(self):

@@ -357,10 +357,11 @@ class CustomKey(Key):
         kwargs['project'] = self._client.project
         super(CustomKey, self).__init__(*path_args, **kwargs)
 
-    def get(self):
+    # use_cache should be passed as False if another process is writing to the same entity in Datastore
+    def get(self, use_cache=True):
         start = datetime.datetime.now()
         cache_key = 'datastore_orm.{}.{}'.format(self.kind, self.id_or_name)
-        if self._cache:
+        if self._cache and use_cache:
             obj = self._cache.get(cache_key)
             if obj:
                 print('Cache hit for key {}'.format(cache_key))
@@ -598,7 +599,7 @@ class BaseModel(metaclass=abc.ABCMeta):
         entity.update(obj_dict)
         return entity
 
-    def put(self, use_cache=True):
+    def put(self):
         """
         Put the object into datastore.
         """

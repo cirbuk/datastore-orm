@@ -363,11 +363,13 @@ class CustomKey(Key):
         if self._cache:
             obj = self._cache.get(cache_key)
             if obj:
-                print('Cache hit')
+                print('Cache hit for key {}'.format(cache_key))
                 end = datetime.datetime.now()
                 print('Time taken for {} is {}'.format('cache hit', end - start))
-                return pickle.loads(obj)
-        print('Cache miss')
+                obj = pickle.loads(obj)
+                print('Object got from cache {}'.format(obj))
+                return obj
+        print('Cache miss for key {}'.format(cache_key))
         obj = self._client.get(self, model_type=self._type)
         self._cache.set(cache_key, pickle.dumps(obj))
         # obj = self._type._dotted_dict_to_object(dict(entity.items()))

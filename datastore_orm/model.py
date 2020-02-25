@@ -606,6 +606,7 @@ class BaseModel(metaclass=abc.ABCMeta):
         entity = self._to_entity()
         if self._cache:
             cache_key = 'datastore_orm.{}.{}'.format(self.__class__.__name__, entity.key.id_or_name)
+            print('Putting value in cache {}'.format(self))
             self._cache.set(cache_key, pickle.dumps(self))
         self._client.put(entity)
         entity.key._type = self.__class__

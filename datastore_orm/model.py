@@ -441,11 +441,10 @@ class CustomQuery(Query):
         :rtype: :class:`Iterator`
         :returns: The iterator for the query.
         """
-
         if client is None:
             client = self._client
 
-        ci = CustomIterator(
+        return CustomIterator(
             self.model_type,
             self,
             client,
@@ -455,7 +454,6 @@ class CustomQuery(Query):
             end_cursor=end_cursor,
             eventual=eventual
         )
-        return ci
 
 
 class BaseModel(metaclass=abc.ABCMeta):

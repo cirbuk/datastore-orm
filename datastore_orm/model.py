@@ -359,24 +359,15 @@ class CustomKey(Key):
 
     # use_cache should be passed as False if another process is writing to the same entity in Datastore
     def get(self, use_cache=True):
-        start = datetime.datetime.now()
         cache_key = 'datastore_orm.{}.{}'.format(self.kind, self.id_or_name)
         if self._cache and use_cache:
             obj = self._cache.get(cache_key)
             if obj:
-                print('Cache hit for key {}'.format(cache_key))
-                end = datetime.datetime.now()
-                print('Time taken for {} is {}'.format('cache hit', end - start))
                 obj = pickle.loads(obj)
-                print('Object got from cache {}'.format(obj))
                 return obj
-        print('Cache miss for key {}'.format(cache_key))
         obj = self._client.get(self, model_type=self._type)
-        self._cache.set(cache_key, pickle.dumps(obj))
-        # obj = self._type._dotted_dict_to_object(dict(entity.items()))
-        # obj.key = entity.key
-        end = datetime.datetime.now()
-        print('Time taken for {} is {}'.format('cache miss', end - start))
+        if self._cache:
+            self._cache.set(cache_key, pickle.dumps(obj))
         return obj
 
     def delete(self):
@@ -603,17 +594,13 @@ class BaseModel(metaclass=abc.ABCMeta):
         """
 
         # TODO (Chaitanya): Directly convert object to protobuf and call PUT instead of converting to entity first.
-        start = datetime.datetime.now()
         entity = self._to_entity()
         if self._cache:
             cache_key = 'datastore_orm.{}.{}'.format(self.__class__.__name__, entity.key.id_or_name)
-            print('Putting value in cache {}'.format(self))
             self._cache.set(cache_key, pickle.dumps(self))
         self._client.put(entity)
         entity.key._type = self.__class__
         self.key = entity.key
-        end = datetime.datetime.now()
-        print('Time taken for {} is {}'.format('datastore and cache put', end - start))
         return entity.key
 
     def delete(self):

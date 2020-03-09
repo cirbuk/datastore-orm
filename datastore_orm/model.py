@@ -363,10 +363,12 @@ class CustomKey(Key):
         if self._cache and use_cache:
             obj = self._cache.get(cache_key)
             if obj:
+                print('Cache hit for key {}'.format(cache_key))
                 obj = pickle.loads(obj)
                 return obj
         obj = self._client.get(self, model_type=self._type)
         if self._cache:
+            print('Cache miss for key {}'.format(cache_key))
             self._cache.set(cache_key, pickle.dumps(obj))
         return obj
 

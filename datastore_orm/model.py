@@ -356,6 +356,7 @@ class CustomKey(Key):
         kwargs['namespace'] = self._client.namespace
         kwargs['project'] = self._client.project
         super(CustomKey, self).__init__(*path_args, **kwargs)
+        self._type = SubclassMap.get()[self.kind]
 
     # use_cache should be passed as False if another process is writing to the same entity in Datastore
     def get(self, use_cache=True):
@@ -601,10 +602,11 @@ class BaseModel(metaclass=abc.ABCMeta):
             cache_key = 'datastore_orm.{}.{}'.format(self.__class__.__name__, entity.key.id_or_name)
             self._cache.set(cache_key, pickle.dumps(self))
             print('Cache put for datastore_orm key {}'.format(cache_key))
+        self.key = entity.key
+        del entity['key']
         self._client.put(entity)
         entity.key._type = self.__class__
-        self.key = entity.key
-        return entity.key
+        return self.key
 
     def delete(self):
         """Delete object from datastore.

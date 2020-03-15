@@ -603,7 +603,8 @@ class BaseModel(metaclass=abc.ABCMeta):
             self._cache.set(cache_key, pickle.dumps(self))
             print('Cache put for datastore_orm key {}'.format(cache_key))
         self.key = entity.key
-        del entity['key']
+        if 'key' in entity:
+            del entity['key']
         self._client.put(entity)
         entity.key._type = self.__class__
         return self.key

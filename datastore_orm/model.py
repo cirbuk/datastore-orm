@@ -4,13 +4,14 @@ from google.cloud.datastore.query import Iterator
 from google.cloud.datastore import helpers
 from google.cloud.datastore import Key
 import datetime
-from datetime import date
 from typing import get_type_hints
 import copy
 import abc
 from redis import StrictRedis
-import json
 import pickle
+import shutil
+from functools import partial
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 _MAX_LOOPS = 128
 
@@ -376,6 +377,10 @@ class CustomKey(Key):
     def delete(self):
         self._client.delete(self)
 
+    def get_multi(self, keys):
+        objects = self._client.get_multi(keys, model_type=self._type)
+        return objects
+
 
 class CustomQuery(Query):
     """CustomQuery class overrides the google.cloud.datastore.Query class in order to use a custom
@@ -730,6 +735,22 @@ class CustomClient(Client):
         """
         if not keys:
             return []
+        get_multi_partial = partial(self.get_single, missing=missing, deferred=deferred, transaction=transaction,
+                                    eventual=eventual, model_type=model_type)
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(get_multi_partial, keys=[key]) for key in keys]
+            basemodels = []
+            while True:
+                for future in as_completed(futures):
+                    basemodel = future.result()
+                    basemodels.append(basemodel[0] if basemodel else None)
+                    futures.remove(future)
+                if len(futures) == 0:
+                    break
+            return basemodels
+
+    def get_single(self, keys, missing=None, deferred=None,
+                   transaction=None, eventual=False, model_type=None):
 
         ids = set(key.project for key in keys)
         for current_id in ids:

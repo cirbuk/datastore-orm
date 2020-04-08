@@ -9,7 +9,7 @@ import copy
 import abc
 from redis import StrictRedis
 import pickle
-import shutil
+import asyncio
 from functools import partial
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -692,7 +692,7 @@ class CustomClient(Client):
 
         :raises: :class:`ValueError` if eventual is True and in a transaction.
         """
-        start= datetime.datetime.now()
+        start = datetime.datetime.now()
         entities = self.get_multi(keys=[key],
                                   missing=missing,
                                   deferred=deferred,
@@ -700,7 +700,7 @@ class CustomClient(Client):
                                   eventual=eventual, model_type=model_type)
         if entities:
             end = datetime.datetime.now()
-            print('Time taken for get {}'.format(end-start))
+            print('Time taken for get {}'.format(end - start))
             return entities[0]
 
     def get_multi(self, keys, missing=None, deferred=None,
@@ -740,17 +740,52 @@ class CustomClient(Client):
             return []
         get_multi_partial = partial(self.get_single, missing=missing, deferred=deferred, transaction=transaction,
                                     eventual=eventual, model_type=model_type)
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [executor.submit(get_multi_partial, keys=[key]) for key in keys]
-            basemodels = []
+        ordering = dict()
+        with ThreadPoolExecutor(max_workers=len(keys)) as executor:
+            futures = []
+            for key in keys:
+                future = executor.submit(get_multi_partial, keys=[key])
+                futures.append(future)
+                ordering[future] = key.id_or_name
             while True:
                 for future in as_completed(futures):
                     basemodel = future.result()
-                    basemodels.append(basemodel[0] if basemodel else None)
+                    ordering[future] = basemodel[0] if basemodel else None
                     futures.remove(future)
                 if len(futures) == 0:
                     break
+            basemodels = [value for key,value in ordering.items()]
             return basemodels
+        # ids = set(key.project for key in keys)
+        # for current_id in ids:
+        #     if current_id != self.project:
+        #         raise ValueError('Keys do not match project')
+        #
+        # if transaction is None:
+        #     transaction = self.current_transaction
+        #
+        # entity_pbs = _extended_lookup(
+        #     datastore_api=self._datastore_api,
+        #     project=self.project,
+        #     key_pbs=[key.to_protobuf() for key in keys],
+        #     eventual=eventual,
+        #     missing=missing,
+        #     deferred=deferred,
+        #     transaction_id=transaction and transaction.id,
+        # )
+        #
+        # if missing is not None:
+        #     missing[:] = [
+        #         CustomIterator.object_from_protobuf(missed_pb, model_type=model_type)
+        #         for missed_pb in missing]
+        #
+        # if deferred is not None:
+        #     deferred[:] = [
+        #         CustomIterator.key_from_protobuf(deferred_pb)
+        #         for deferred_pb in deferred]
+        #
+        # return [CustomIterator.object_from_protobuf(entity_pb, model_type=model_type)
+        #         for entity_pb in entity_pbs]
 
     def get_single(self, keys, missing=None, deferred=None,
                    transaction=None, eventual=False, model_type=None):

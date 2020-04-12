@@ -648,9 +648,11 @@ class BaseModel(metaclass=abc.ABCMeta):
 
 class CustomClient(Client):
     _client: datastore.Client
+    _cache: StrictRedis
 
-    def __init__(self, client=None):
+    def __init__(self, client=None, cache=None):
         self._client = client
+        self._cache = cache
         if not getattr(self, '_client', None):
             raise ValueError("Datastore _client is not set. Have you called datastore_orm.initialize()?")
         super(CustomClient, self).__init__(project=self._client.project, namespace=self._client.namespace)
@@ -754,41 +756,16 @@ class CustomClient(Client):
                     futures.remove(future)
                 if len(futures) == 0:
                     break
-            basemodels = [value for key,value in ordering.items()]
+            basemodels = [value for key, value in ordering.items()]
             return basemodels
-        # ids = set(key.project for key in keys)
-        # for current_id in ids:
-        #     if current_id != self.project:
-        #         raise ValueError('Keys do not match project')
-        #
-        # if transaction is None:
-        #     transaction = self.current_transaction
-        #
-        # entity_pbs = _extended_lookup(
-        #     datastore_api=self._datastore_api,
-        #     project=self.project,
-        #     key_pbs=[key.to_protobuf() for key in keys],
-        #     eventual=eventual,
-        #     missing=missing,
-        #     deferred=deferred,
-        #     transaction_id=transaction and transaction.id,
-        # )
-        #
-        # if missing is not None:
-        #     missing[:] = [
-        #         CustomIterator.object_from_protobuf(missed_pb, model_type=model_type)
-        #         for missed_pb in missing]
-        #
-        # if deferred is not None:
-        #     deferred[:] = [
-        #         CustomIterator.key_from_protobuf(deferred_pb)
-        #         for deferred_pb in deferred]
-        #
-        # return [CustomIterator.object_from_protobuf(entity_pb, model_type=model_type)
-        #         for entity_pb in entity_pbs]
 
     def get_single(self, keys, missing=None, deferred=None,
                    transaction=None, eventual=False, model_type=None):
+        cache_key = 'datastore_orm.{}.{}'.format(keys[0].kind, keys[0].id_or_name)
+        if self._cache:
+            obj = self._cache.get(cache_key)
+            if obj:
+                return [pickle.loads(obj)]
 
         ids = set(key.project for key in keys)
         for current_id in ids:
@@ -818,12 +795,16 @@ class CustomClient(Client):
                 CustomIterator.key_from_protobuf(deferred_pb)
                 for deferred_pb in deferred]
 
-        return [CustomIterator.object_from_protobuf(entity_pb, model_type=model_type)
-                for entity_pb in entity_pbs]
+        basemodels = [CustomIterator.object_from_protobuf(entity_pb, model_type=model_type)
+                      for entity_pb in entity_pbs]
+        if self._cache and basemodels:
+            self._cache.set(cache_key, pickle.dumps(basemodels[0]))
+
+        return basemodels
 
 
 def initialize(client, cache=None):
-    custom_client = CustomClient(client=client)
+    custom_client = CustomClient(client=client, cache=cache)
     BaseModel._client = custom_client
     BaseModel._cache = cache
     CustomKey._client = custom_client

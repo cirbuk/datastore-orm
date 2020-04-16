@@ -362,14 +362,23 @@ class CustomKey(Key):
     # use_cache should be passed as False if another process is writing to the same entity in Datastore
     def get(self, use_cache=True):
         cache_key = 'datastore_orm.{}.{}'.format(self.kind, self.id_or_name)
-        if self._cache and use_cache:
-            obj = self._cache.get(cache_key)
-            if obj:
-                obj = pickle.loads(obj)
-                return obj
+        try:
+            if self._cache and use_cache:
+                obj = self._cache.get(cache_key)
+                if obj:
+                    obj = pickle.loads(obj)
+                    return obj
+        except:
+            pass
+
+        # Get object from datastore
         obj = self._client.get(self, model_type=self._type)
-        if self._cache:
-            self._cache.set(cache_key, pickle.dumps(obj))
+
+        try:
+            if self._cache:
+                self._cache.set(cache_key, pickle.dumps(obj))
+        except:
+            pass
         return obj
 
     def delete(self):
@@ -746,11 +755,14 @@ class CustomClient(Client):
 
     def get_single(self, keys, missing=None, deferred=None,
                    transaction=None, eventual=False, model_type=None):
-        cache_key = 'datastore_orm.{}.{}'.format(keys[0].kind, keys[0].id_or_name)
-        if self._cache:
-            obj = self._cache.get(cache_key)
-            if obj:
-                return [pickle.loads(obj)]
+        try:
+            cache_key = 'datastore_orm.{}.{}'.format(keys[0].kind, keys[0].id_or_name)
+            if self._cache:
+                obj = self._cache.get(cache_key)
+                if obj:
+                    return [pickle.loads(obj)]
+        except:
+            pass
 
         ids = set(key.project for key in keys)
         for current_id in ids:
@@ -782,9 +794,11 @@ class CustomClient(Client):
 
         basemodels = [CustomIterator.object_from_protobuf(entity_pb, model_type=model_type)
                       for entity_pb in entity_pbs]
-        if self._cache and basemodels:
-            self._cache.set(cache_key, pickle.dumps(basemodels[0]))
-
+        try:
+            if self._cache and basemodels:
+                self._cache.set(cache_key, pickle.dumps(basemodels[0]))
+        except:
+            pass
         return basemodels
 
 

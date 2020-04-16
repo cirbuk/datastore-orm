@@ -610,9 +610,12 @@ class BaseModel(metaclass=abc.ABCMeta):
 
         # TODO (Chaitanya): Directly convert object to protobuf and call PUT instead of converting to entity first.
         entity = self._to_entity()
-        if self._cache:
-            cache_key = 'datastore_orm.{}.{}'.format(self.__class__.__name__, entity.key.id_or_name)
-            self._cache.set(cache_key, pickle.dumps(self))
+        try:
+            if self._cache:
+                cache_key = 'datastore_orm.{}.{}'.format(self.__class__.__name__, entity.key.id_or_name)
+                self._cache.set(cache_key, pickle.dumps(self))
+        except:
+            pass
         self.key = entity.key
         if 'key' in entity:
             del entity['key']

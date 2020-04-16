@@ -365,12 +365,10 @@ class CustomKey(Key):
         if self._cache and use_cache:
             obj = self._cache.get(cache_key)
             if obj:
-                print('Cache hit for key {}'.format(cache_key))
                 obj = pickle.loads(obj)
                 return obj
         obj = self._client.get(self, model_type=self._type)
         if self._cache:
-            print('Cache miss for key {}'.format(cache_key))
             self._cache.set(cache_key, pickle.dumps(obj))
         return obj
 
@@ -606,7 +604,6 @@ class BaseModel(metaclass=abc.ABCMeta):
         if self._cache:
             cache_key = 'datastore_orm.{}.{}'.format(self.__class__.__name__, entity.key.id_or_name)
             self._cache.set(cache_key, pickle.dumps(self))
-            print('Cache put for datastore_orm key {}'.format(cache_key))
         self.key = entity.key
         if 'key' in entity:
             del entity['key']
@@ -694,15 +691,12 @@ class CustomClient(Client):
 
         :raises: :class:`ValueError` if eventual is True and in a transaction.
         """
-        start = datetime.datetime.now()
         entities = self.get_multi(keys=[key],
                                   missing=missing,
                                   deferred=deferred,
                                   transaction=transaction,
                                   eventual=eventual, model_type=model_type)
         if entities:
-            end = datetime.datetime.now()
-            print('Time taken for get {}'.format(end - start))
             return entities[0]
 
     def get_multi(self, keys, missing=None, deferred=None,

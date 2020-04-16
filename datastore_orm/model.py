@@ -736,21 +736,12 @@ class CustomClient(Client):
             return []
         get_multi_partial = partial(self.get_single, missing=missing, deferred=deferred, transaction=transaction,
                                     eventual=eventual, model_type=model_type)
-        ordering = dict()
-        with ThreadPoolExecutor(max_workers=len(keys)) as executor:
-            futures = []
-            for key in keys:
-                future = executor.submit(get_multi_partial, keys=[key])
-                futures.append(future)
-                ordering[future] = key.id_or_name
-            while True:
-                for future in as_completed(futures):
-                    basemodel = future.result()
-                    ordering[future] = basemodel[0] if basemodel else None
-                    futures.remove(future)
-                if len(futures) == 0:
-                    break
-            basemodels = [value for key, value in ordering.items()]
+        with ThreadPoolExecutor(max_workers=min(len(keys), 10)) as executor:
+            basemodels = []
+            map_iterator = [[key] for key in keys]
+            results = executor.map(get_multi_partial, map_iterator)
+            for result in results:
+                basemodels.append(result[0])
             return basemodels
 
     def get_single(self, keys, missing=None, deferred=None,

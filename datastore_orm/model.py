@@ -4,13 +4,14 @@ from google.cloud.datastore.query import Iterator
 from google.cloud.datastore import helpers
 from google.cloud.datastore import Key
 import datetime
-from datetime import date
 from typing import get_type_hints
 import copy
 import abc
 from redis import StrictRedis
-import json
 import pickle
+import asyncio
+from functools import partial
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 _MAX_LOOPS = 128
 
@@ -361,20 +362,31 @@ class CustomKey(Key):
     # use_cache should be passed as False if another process is writing to the same entity in Datastore
     def get(self, use_cache=True):
         cache_key = 'datastore_orm.{}.{}'.format(self.kind, self.id_or_name)
-        if self._cache and use_cache:
-            obj = self._cache.get(cache_key)
-            if obj:
-                print('Cache hit for key {}'.format(cache_key))
-                obj = pickle.loads(obj)
-                return obj
+        try:
+            if self._cache and use_cache:
+                obj = self._cache.get(cache_key)
+                if obj:
+                    obj = pickle.loads(obj)
+                    return obj
+        except:
+            pass
+
+        # Get object from datastore
         obj = self._client.get(self, model_type=self._type)
-        if self._cache:
-            print('Cache miss for key {}'.format(cache_key))
-            self._cache.set(cache_key, pickle.dumps(obj))
+
+        try:
+            if self._cache:
+                self._cache.set(cache_key, pickle.dumps(obj))
+        except:
+            pass
         return obj
 
     def delete(self):
         self._client.delete(self)
+
+    def get_multi(self, keys):
+        objects = self._client.get_multi(keys, model_type=self._type)
+        return objects
 
 
 class CustomQuery(Query):
@@ -598,10 +610,12 @@ class BaseModel(metaclass=abc.ABCMeta):
 
         # TODO (Chaitanya): Directly convert object to protobuf and call PUT instead of converting to entity first.
         entity = self._to_entity()
-        if self._cache:
-            cache_key = 'datastore_orm.{}.{}'.format(self.__class__.__name__, entity.key.id_or_name)
-            self._cache.set(cache_key, pickle.dumps(self))
-            print('Cache put for datastore_orm key {}'.format(cache_key))
+        try:
+            if self._cache:
+                cache_key = 'datastore_orm.{}.{}'.format(self.__class__.__name__, entity.key.id_or_name)
+                self._cache.set(cache_key, pickle.dumps(self))
+        except:
+            pass
         self.key = entity.key
         if 'key' in entity:
             del entity['key']
@@ -643,9 +657,11 @@ class BaseModel(metaclass=abc.ABCMeta):
 
 class CustomClient(Client):
     _client: datastore.Client
+    _cache: StrictRedis
 
-    def __init__(self, client=None):
+    def __init__(self, client=None, cache=None):
         self._client = client
+        self._cache = cache
         if not getattr(self, '_client', None):
             raise ValueError("Datastore _client is not set. Have you called datastore_orm.initialize()?")
         super(CustomClient, self).__init__(project=self._client.project, namespace=self._client.namespace)
@@ -730,6 +746,26 @@ class CustomClient(Client):
         """
         if not keys:
             return []
+        get_multi_partial = partial(self.get_single, missing=missing, deferred=deferred, transaction=transaction,
+                                    eventual=eventual, model_type=model_type)
+        with ThreadPoolExecutor(max_workers=min(len(keys), 10)) as executor:
+            basemodels = []
+            map_iterator = [[key] for key in keys]
+            results = executor.map(get_multi_partial, map_iterator)
+            for result in results:
+                basemodels.append(result[0])
+            return basemodels
+
+    def get_single(self, keys, missing=None, deferred=None,
+                   transaction=None, eventual=False, model_type=None):
+        try:
+            cache_key = 'datastore_orm.{}.{}'.format(keys[0].kind, keys[0].id_or_name)
+            if self._cache:
+                obj = self._cache.get(cache_key)
+                if obj:
+                    return [pickle.loads(obj)]
+        except:
+            pass
 
         ids = set(key.project for key in keys)
         for current_id in ids:
@@ -759,12 +795,18 @@ class CustomClient(Client):
                 CustomIterator.key_from_protobuf(deferred_pb)
                 for deferred_pb in deferred]
 
-        return [CustomIterator.object_from_protobuf(entity_pb, model_type=model_type)
-                for entity_pb in entity_pbs]
+        basemodels = [CustomIterator.object_from_protobuf(entity_pb, model_type=model_type)
+                      for entity_pb in entity_pbs]
+        try:
+            if self._cache and basemodels:
+                self._cache.set(cache_key, pickle.dumps(basemodels[0]))
+        except:
+            pass
+        return basemodels
 
 
 def initialize(client, cache=None):
-    custom_client = CustomClient(client=client)
+    custom_client = CustomClient(client=client, cache=cache)
     BaseModel._client = custom_client
     BaseModel._cache = cache
     CustomKey._client = custom_client

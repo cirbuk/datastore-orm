@@ -756,7 +756,7 @@ class CustomClient(Client):
             map_iterator = [[key] for key in keys]
             results = executor.map(get_multi_partial, map_iterator)
             for result in results:
-                basemodels.append(result[0])
+                basemodels.append(result[0] if result else None)
             return basemodels
 
     def get_single(self, keys, missing=None, deferred=None,

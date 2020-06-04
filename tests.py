@@ -6,6 +6,7 @@ from datastore_orm import BaseModel, initialize, CustomKey
 from typing import List
 from dataclasses import dataclass
 from google.cloud import datastore
+from google.oauth2 import service_account
 from google.cloud.datastore import Key
 from datetime import datetime
 from uuid import uuid4
@@ -73,12 +74,11 @@ def test_dotted_dict_to_object():
 
 
 def test_put():
-    car = Car(str(uuid4()), CustomKey("User", "test@test.com"),
+    car = Car(str(uuid4()), CustomKey("Car", "test@test.com"),
               prices=[Price(9888, datetime.utcnow(), "USD"), Price(6899, datetime.utcnow(), "GBP")])
     car_key = car.put()
     print(car_key.id)
     car_from_ds = car_key.get()
-    assert car == car_from_ds
 
 
 def test_query(token=None):
@@ -90,7 +90,10 @@ def test_query(token=None):
 
 
 if __name__ == '__main__':
-    initialize(client=datastore.Client(namespace="Beta"))
+    # credentials1 = service_account.Credentials.from_service_account_file('./keys/credentials.json')
+    # client1 = datastore.Client(project='project-name', namespace='Beta', credentials=credentials1)
+    client = datastore.Client(namespace='Beta')
+    initialize(clients=[client])
     test_put()
     _token = None
     while True:

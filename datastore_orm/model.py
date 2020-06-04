@@ -4,7 +4,7 @@ from google.cloud.datastore.query import Iterator
 from google.cloud.datastore import helpers
 from google.cloud.datastore import Key
 import datetime
-from typing import get_type_hints
+from typing import get_type_hints, List, Union
 import copy
 import abc
 from redis import StrictRedis
@@ -12,6 +12,7 @@ import pickle
 import asyncio
 from functools import partial
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Thread
 
 _MAX_LOOPS = 128
 
@@ -347,17 +348,26 @@ class CustomIterator(Iterator):
 
 
 class CustomKey(Key):
-    _client: datastore.Client
+    _client: datastore.Client  # client to read/query from (reads are from a single client)
+    _clients: List[datastore.Client]  # list of all clients (writes occur to all clients)
     _type: object
     _cache: StrictRedis
 
     def __init__(self, *path_args, **kwargs):
         if not getattr(self, '_client', None):
             raise ValueError("Datastore _client is not set. Have you called datastore_orm.initialize()?")
-        kwargs['namespace'] = self._client.namespace
-        kwargs['project'] = self._client.project
+        if not kwargs.get('namespace'):
+            kwargs['namespace'] = self._client.namespace
+        if not kwargs.get('project'):
+            kwargs['project'] = self._client.project
         super(CustomKey, self).__init__(*path_args, **kwargs)
         self._type = SubclassMap.get()[self.kind]
+
+    @classmethod
+    def __initialize_class__(cls, clients=None, cache=None):
+        cls._clients = clients
+        cls._client = clients[0]
+        cls._cache = cache
 
     # use_cache should be passed as False if another process is writing to the same entity in Datastore
     def get(self, use_cache=True):
@@ -470,13 +480,16 @@ class BaseModel(metaclass=abc.ABCMeta):
     """
 
     _client: datastore.Client
+    _clients: List[datastore.Client]
     _exclude_from_indexes_: tuple
     _cache: StrictRedis
 
     @classmethod
-    def __init__(cls, client=None):
+    def __init__(cls, clients=None, cache=None):
         cls._exclude_from_indexes_ = tuple()
-        cls._client = client
+        cls._clients = clients
+        cls._client = clients[0]
+        cls._cache = cache
 
     def dottify(self, base_name):
         """Convert a standard BaseModel object with nested objects into dot notation to maintain
@@ -607,7 +620,6 @@ class BaseModel(metaclass=abc.ABCMeta):
         """
         Put the object into datastore.
         """
-
         # TODO (Chaitanya): Directly convert object to protobuf and call PUT instead of converting to entity first.
         entity = self._to_entity()
         try:
@@ -619,9 +631,32 @@ class BaseModel(metaclass=abc.ABCMeta):
         self.key = entity.key
         if 'key' in entity:
             del entity['key']
-        self._client.put(entity)
+        self._clients[0].put(entity)
+        # self.background_put(entity, self._clients[1:])
+        if len(self._clients) > 1:
+            Thread(target=self.background_put, args=(entity, self._clients[1:])).start()
         entity.key._type = self.__class__
+        self.key = entity.key
         return self.key
+
+    def background_put(self, entity, clients):
+        for client in clients:
+            new_entity = copy.deepcopy(entity)
+            for k, v in entity.items():
+                if isinstance(v, CustomKey):
+                    new_entity[k] = self._get_updated_key(v, client)
+                elif isinstance(v, list) and len(v) > 0 and isinstance(v[0], CustomKey):
+                    new_entity[k] = [self._get_updated_key(old_key, client) for old_key in v]
+                # TODO: Handle keys in dict and nested objects
+            new_entity.key = self._get_updated_key(new_entity.key, client)
+            client.put(new_entity)
+
+    def _get_updated_key(self, old_key, client):
+        if old_key.id_or_name:
+            key = CustomKey(old_key.kind, old_key.id_or_name, namespace=client.namespace, project=client.project)
+        else:
+            key = CustomKey(old_key.kind, namespace=client.namespace, project=client.project)
+        return key
 
     def delete(self):
         """Delete object from datastore.
@@ -664,7 +699,8 @@ class CustomClient(Client):
         self._cache = cache
         if not getattr(self, '_client', None):
             raise ValueError("Datastore _client is not set. Have you called datastore_orm.initialize()?")
-        super(CustomClient, self).__init__(project=self._client.project, namespace=self._client.namespace)
+        super(CustomClient, self).__init__(project=self._client.project, namespace=self._client.namespace,
+                                           credentials=self._client._credentials)
 
     def get(self, key, missing=None, deferred=None,
             transaction=None, eventual=False, model_type=None):
@@ -761,8 +797,8 @@ class CustomClient(Client):
 
     def get_single(self, keys, missing=None, deferred=None,
                    transaction=None, eventual=False, model_type=None):
+        cache_key = 'datastore_orm.{}.{}'.format(keys[0].kind, keys[0].id_or_name)
         try:
-            cache_key = 'datastore_orm.{}.{}'.format(keys[0].kind, keys[0].id_or_name)
             if self._cache:
                 obj = self._cache.get(cache_key)
                 if obj:
@@ -808,9 +844,13 @@ class CustomClient(Client):
         return basemodels
 
 
-def initialize(client, cache=None):
-    custom_client = CustomClient(client=client, cache=cache)
-    BaseModel._client = custom_client
-    BaseModel._cache = cache
-    CustomKey._client = custom_client
-    CustomKey._cache = cache
+def initialize(clients, cache=None):
+    if not isinstance(clients, list):
+        clients = [clients]
+
+    orm_clients = []
+    for client in clients:
+        orm_clients.append(CustomClient(client=client, cache=cache))
+
+    BaseModel(orm_clients, cache)
+    CustomKey.__initialize_class__(orm_clients, cache)

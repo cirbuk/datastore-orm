@@ -391,8 +391,28 @@ class CustomKey(Key):
             pass
         return obj
 
+    def _get_updated_key(self, old_key, client):
+        if old_key.id_or_name:
+            key = CustomKey(old_key.kind, old_key.id_or_name, namespace=client.namespace, project=client.project)
+        else:
+            key = CustomKey(old_key.kind, namespace=client.namespace, project=client.project)
+        return key
+
+    def background_delete(self, key, clients):
+        for client in clients:
+            new_key = self._get_updated_key(key, client)
+            client.delete(new_key)
+
     def delete(self):
-        self._client.delete(self)
+        """Delete object from datastore.
+        """
+        self._clients[0].delete(self.key)
+        if len(self._clients) > 1:
+            Thread(target=self.background_delete, args=(self.key, self._clients[1:])).start()
+
+        if self._cache:
+            cache_key = 'datastore_orm.{}.{}'.format(self.__class__.__name__, self.key.id_or_name)
+            self._cache.delete(cache_key)
 
     def get_multi(self, keys):
         objects = self._client.get_multi(keys, model_type=self._type)

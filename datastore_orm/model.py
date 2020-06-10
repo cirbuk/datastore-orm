@@ -658,10 +658,20 @@ class BaseModel(metaclass=abc.ABCMeta):
             key = CustomKey(old_key.kind, namespace=client.namespace, project=client.project)
         return key
 
+    def background_delete(self, key, clients):
+        for client in clients:
+            client.delete(key)
+
     def delete(self):
         """Delete object from datastore.
         """
-        self._client.delete(self.key)
+        self._clients[0].delete(self.key)
+        if len(self._clients) > 1:
+            Thread(target=self.background_delete, args=(self.key, self._clients[1:])).start()
+
+        if self._cache:
+            cache_key = 'datastore_orm.{}.{}'.format(self.__class__.__name__, self.key.id_or_name)
+            self._cache.delete(cache_key)
 
     def to_dict(self, exclude: set = None):
         if type(exclude) == list:

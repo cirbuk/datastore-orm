@@ -660,7 +660,8 @@ class BaseModel(metaclass=abc.ABCMeta):
 
     def background_delete(self, key, clients):
         for client in clients:
-            client.delete(key)
+            new_key = self._get_updated_key(key, client)
+            client.delete(new_key)
 
     def delete(self):
         """Delete object from datastore.

@@ -406,9 +406,9 @@ class CustomKey(Key):
     def delete(self):
         """Delete object from datastore.
         """
-        self._clients[0].delete(self.key)
+        self._clients[0].delete(self)
         if len(self._clients) > 1:
-            Thread(target=self.background_delete, args=(self.key, self._clients[1:])).start()
+            Thread(target=self.background_delete, args=(self, self._clients[1:])).start()
 
         if self._cache:
             cache_key = 'datastore_orm.{}.{}'.format(self.__class__.__name__, self.key.id_or_name)

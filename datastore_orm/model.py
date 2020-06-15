@@ -407,16 +407,13 @@ class CustomKey(Key):
         """Delete object from datastore.
         """
         if self._cache:
-            cache_key = 'datastore_orm.{}.{}'.format(self.__class__.__name__, self.id_or_name)
+            cache_key = 'datastore_orm.{}.{}'.format(self.kind, self.id_or_name)
             self._cache.delete(cache_key)
 
         if len(self._clients) > 1:
             Thread(target=self.background_delete, args=(self, self._clients[1:])).start()
 
         self._clients[0].delete(self)
-
-
-
 
     def get_multi(self, keys):
         objects = self._client.get_multi(keys, model_type=self._type)

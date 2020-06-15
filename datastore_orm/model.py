@@ -406,13 +406,17 @@ class CustomKey(Key):
     def delete(self):
         """Delete object from datastore.
         """
-        self._clients[0].delete(self)
+        if self._cache:
+            cache_key = 'datastore_orm.{}.{}'.format(self.__class__.__name__, self.id_or_name)
+            self._cache.delete(cache_key)
+
         if len(self._clients) > 1:
             Thread(target=self.background_delete, args=(self, self._clients[1:])).start()
 
-        if self._cache:
-            cache_key = 'datastore_orm.{}.{}'.format(self.__class__.__name__, self.key.id_or_name)
-            self._cache.delete(cache_key)
+        self._clients[0].delete(self)
+
+
+
 
     def get_multi(self, keys):
         objects = self._client.get_multi(keys, model_type=self._type)
@@ -686,13 +690,17 @@ class BaseModel(metaclass=abc.ABCMeta):
     def delete(self):
         """Delete object from datastore.
         """
-        self._clients[0].delete(self.key)
-        if len(self._clients) > 1:
-            Thread(target=self.background_delete, args=(self.key, self._clients[1:])).start()
-
+        # Delete from cache first
         if self._cache:
             cache_key = 'datastore_orm.{}.{}'.format(self.__class__.__name__, self.key.id_or_name)
             self._cache.delete(cache_key)
+
+        # Pass the key for deleting from other clients in background
+        if len(self._clients) > 1:
+            Thread(target=self.background_delete, args=(self.key, self._clients[1:])).start()
+
+        # Delete the key from 1st client
+        self._clients[0].delete(self.key)
 
     def to_dict(self, exclude: set = None):
         if type(exclude) == list:

@@ -663,9 +663,9 @@ class BaseModel(metaclass=abc.ABCMeta):
         for client in clients:
             new_entity = copy.deepcopy(entity)
             for k, v in entity.items():
-                if isinstance(v, CustomKey):
+                if isinstance(v, Key):
                     new_entity[k] = self._get_updated_key(v, client)
-                elif isinstance(v, list) and len(v) > 0 and isinstance(v[0], CustomKey):
+                elif isinstance(v, list) and len(v) > 0 and isinstance(v[0], Key):
                     new_entity[k] = [self._get_updated_key(old_key, client) for old_key in v]
                 # TODO: Handle keys in dict and nested objects
             new_entity.key = self._get_updated_key(new_entity.key, client)

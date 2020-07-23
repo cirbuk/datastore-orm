@@ -11,6 +11,7 @@ import abc
 from redis import StrictRedis
 import pickle
 import asyncio
+import logging
 from functools import partial
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Thread
@@ -402,7 +403,19 @@ class CustomKey(Key):
     def background_delete(self, key, clients):
         for client in clients:
             new_key = self._get_updated_key(key, client)
-            client.delete(new_key)
+            self.retry_background_delete(new_key, client, attempt=1)
+
+    def retry_background_delete(self, key, client, attempt):
+        # Sleeping before retrying. sleep time increases for each of the 3 retries.
+        sleep(0.5 * attempt)
+        if attempt < 4:
+            try:
+                client.delete(key)
+            except:
+                logging.warning(F"Failed to delete from datastore in background in attempt {attempt}, retrying.")
+                self.retry_background_delete(key, client, attempt+1)
+        else:
+            return
 
     def delete(self):
         """Delete object from datastore.
@@ -680,7 +693,7 @@ class BaseModel(metaclass=abc.ABCMeta):
             try:
                 client.put(entity)
             except:
-                print(F"Failed to write to datastore in background in attempt {attempt}, retrying.")
+                logging.warning(F"Failed to write to datastore in background in attempt {attempt}, retrying.")
                 self.retry_background_write(entity, client, attempt+1)
         else:
             return
@@ -704,7 +717,7 @@ class BaseModel(metaclass=abc.ABCMeta):
             try:
                 client.delete(key)
             except:
-                print(F"Failed to delete from datastore in background in attempt {attempt}, retrying.")
+                logging.warning(F"Failed to delete from datastore in background in attempt {attempt}, retrying.")
                 self.retry_background_delete(key, client, attempt+1)
         else:
             return

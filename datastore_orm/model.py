@@ -4,12 +4,14 @@ from google.cloud.datastore.query import Iterator
 from google.cloud.datastore import helpers
 from google.cloud.datastore import Key
 import datetime
+from time import sleep
 from typing import get_type_hints, List, Union
 import copy
 import abc
 from redis import StrictRedis
 import pickle
 import asyncio
+import logging
 from functools import partial
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Thread
@@ -401,18 +403,31 @@ class CustomKey(Key):
     def background_delete(self, key, clients):
         for client in clients:
             new_key = self._get_updated_key(key, client)
-            client.delete(new_key)
+            self.retry_background_delete(new_key, client, attempt=1)
+
+    def retry_background_delete(self, key, client, attempt):
+        # Sleeping before retrying. sleep time increases for each of the 3 retries.
+        sleep(0.5 * attempt)
+        if attempt < 4:
+            try:
+                client.delete(key)
+            except:
+                logging.warning(F"Failed to delete from datastore in background in attempt {attempt}, retrying.")
+                self.retry_background_delete(key, client, attempt+1)
+        else:
+            return
 
     def delete(self):
         """Delete object from datastore.
         """
-        self._clients[0].delete(self)
+        if self._cache:
+            cache_key = 'datastore_orm.{}.{}'.format(self.kind, self.id_or_name)
+            self._cache.delete(cache_key)
+
         if len(self._clients) > 1:
             Thread(target=self.background_delete, args=(self, self._clients[1:])).start()
 
-        if self._cache:
-            cache_key = 'datastore_orm.{}.{}'.format(self.__class__.__name__, self.key.id_or_name)
-            self._cache.delete(cache_key)
+        self._clients[0].delete(self)
 
     def get_multi(self, keys):
         objects = self._client.get_multi(keys, model_type=self._type)
@@ -669,7 +684,19 @@ class BaseModel(metaclass=abc.ABCMeta):
                     new_entity[k] = [self._get_updated_key(old_key, client) for old_key in v]
                 # TODO: Handle keys in dict and nested objects
             new_entity.key = self._get_updated_key(new_entity.key, client)
-            client.put(new_entity)
+            self.retry_background_write(new_entity, client, attempt=1)
+
+    def retry_background_write(self, entity, client, attempt):
+        # Sleeping before retrying. sleep time increases for each of the 3 retries.
+        sleep(0.5 * attempt)
+        if attempt < 4:
+            try:
+                client.put(entity)
+            except:
+                logging.warning(F"Failed to write to datastore in background in attempt {attempt}, retrying.")
+                self.retry_background_write(entity, client, attempt+1)
+        else:
+            return
 
     def _get_updated_key(self, old_key, client):
         if old_key.id_or_name:
@@ -681,18 +708,34 @@ class BaseModel(metaclass=abc.ABCMeta):
     def background_delete(self, key, clients):
         for client in clients:
             new_key = self._get_updated_key(key, client)
-            client.delete(new_key)
+            self.retry_background_delete(new_key, client, attempt=1)
+
+    def retry_background_delete(self, key, client, attempt):
+        # Sleeping before retrying. sleep time increases for each of the 3 retries.
+        sleep(0.5 * attempt)
+        if attempt < 4:
+            try:
+                client.delete(key)
+            except:
+                logging.warning(F"Failed to delete from datastore in background in attempt {attempt}, retrying.")
+                self.retry_background_delete(key, client, attempt+1)
+        else:
+            return
 
     def delete(self):
         """Delete object from datastore.
         """
-        self._clients[0].delete(self.key)
-        if len(self._clients) > 1:
-            Thread(target=self.background_delete, args=(self.key, self._clients[1:])).start()
-
+        # Delete from cache first
         if self._cache:
             cache_key = 'datastore_orm.{}.{}'.format(self.__class__.__name__, self.key.id_or_name)
             self._cache.delete(cache_key)
+
+        # Pass the key for deleting from other clients in background
+        if len(self._clients) > 1:
+            Thread(target=self.background_delete, args=(self.key, self._clients[1:])).start()
+
+        # Delete the key from 1st client
+        self._clients[0].delete(self.key)
 
     def to_dict(self, exclude: set = None):
         if type(exclude) == list:

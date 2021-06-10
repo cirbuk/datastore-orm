@@ -372,7 +372,7 @@ class CustomKey(Key):
         cls._cache = cache
 
     # use_cache should be passed as False if another process is writing to the same entity in Datastore
-    def get(self, use_cache=True):
+    def get(self, use_cache=True, expiry=86400):
         cache_key = 'datastore_orm.{}.{}'.format(self.kind, self.id_or_name)
         try:
             if self._cache and use_cache:
@@ -388,7 +388,7 @@ class CustomKey(Key):
 
         try:
             if self._cache:
-                self._cache.set(cache_key, pickle.dumps(obj))
+                self._cache.set(cache_key, pickle.dumps(obj), expiry)
         except:
             pass
         return obj
@@ -825,7 +825,7 @@ class CustomClient(Client):
             return entities[0]
 
     def get_multi(self, keys, missing=None, deferred=None,
-                  transaction=None, eventual=False, model_type=None):
+                  transaction=None, eventual=False, model_type=None, expiry=86400):
         """Retrieve entities, along with their attributes.
 
         :type keys: list of :class:`google.cloud.datastore.key.Key`
@@ -860,7 +860,7 @@ class CustomClient(Client):
         if not keys:
             return []
         get_multi_partial = partial(self.get_single, missing=missing, deferred=deferred, transaction=transaction,
-                                    eventual=eventual, model_type=model_type)
+                                    eventual=eventual, model_type=model_type, expiry=86400)
         with ThreadPoolExecutor(max_workers=min(len(keys), 10)) as executor:
             basemodels = []
             map_iterator = [[key] for key in keys]
@@ -870,7 +870,7 @@ class CustomClient(Client):
             return basemodels
 
     def get_single(self, keys, missing=None, deferred=None,
-                   transaction=None, eventual=False, model_type=None):
+                   transaction=None, eventual=False, model_type=None, expiry=None):
         cache_key = 'datastore_orm.{}.{}'.format(keys[0].kind, keys[0].id_or_name)
         try:
             if self._cache:
@@ -912,7 +912,7 @@ class CustomClient(Client):
                       for entity_pb in entity_pbs]
         try:
             if self._cache and basemodels:
-                self._cache.set(cache_key, pickle.dumps(basemodels[0]))
+                self._cache.set(cache_key, pickle.dumps(basemodels[0]), expiry)
         except:
             pass
         return basemodels

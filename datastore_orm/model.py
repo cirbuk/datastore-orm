@@ -870,7 +870,7 @@ class CustomClient(Client):
             return basemodels
 
     def get_single(self, keys, missing=None, deferred=None,
-                   transaction=None, eventual=False, model_type=None, expiry=None):
+                   transaction=None, eventual=False, model_type=None, expiry=86400):
         cache_key = 'datastore_orm.{}.{}'.format(keys[0].kind, keys[0].id_or_name)
         try:
             if self._cache:

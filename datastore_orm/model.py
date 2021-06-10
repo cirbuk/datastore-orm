@@ -372,7 +372,7 @@ class CustomKey(Key):
         cls._cache = cache
 
     # use_cache should be passed as False if another process is writing to the same entity in Datastore
-    def get(self, use_cache=True):
+    def get(self, use_cache=True, expiry=86400):
         cache_key = 'datastore_orm.{}.{}'.format(self.kind, self.id_or_name)
         try:
             if self._cache and use_cache:
@@ -388,7 +388,7 @@ class CustomKey(Key):
 
         try:
             if self._cache:
-                self._cache.set(cache_key, pickle.dumps(obj))
+                self._cache.set(cache_key, pickle.dumps(obj), expiry)
         except:
             pass
         return obj
@@ -413,7 +413,7 @@ class CustomKey(Key):
                 client.delete(key)
             except:
                 logging.warning(F"Failed to delete from datastore in background in attempt {attempt}, retrying.")
-                self.retry_background_delete(key, client, attempt+1)
+                self.retry_background_delete(key, client, attempt + 1)
         else:
             return
 
@@ -651,7 +651,7 @@ class BaseModel(metaclass=abc.ABCMeta):
         entity.update(obj_dict)
         return entity
 
-    def put(self):
+    def put(self, expiry=86400):
         """
         Put the object into datastore.
         """
@@ -660,7 +660,7 @@ class BaseModel(metaclass=abc.ABCMeta):
         try:
             if self._cache:
                 cache_key = 'datastore_orm.{}.{}'.format(self.__class__.__name__, entity.key.id_or_name)
-                self._cache.set(cache_key, pickle.dumps(self))
+                self._cache.set(cache_key, pickle.dumps(self), expiry)
         except:
             pass
         self.key = entity.key
@@ -694,7 +694,7 @@ class BaseModel(metaclass=abc.ABCMeta):
                 client.put(entity)
             except:
                 logging.warning(F"Failed to write to datastore in background in attempt {attempt}, retrying.")
-                self.retry_background_write(entity, client, attempt+1)
+                self.retry_background_write(entity, client, attempt + 1)
         else:
             return
 
@@ -718,7 +718,7 @@ class BaseModel(metaclass=abc.ABCMeta):
                 client.delete(key)
             except:
                 logging.warning(F"Failed to delete from datastore in background in attempt {attempt}, retrying.")
-                self.retry_background_delete(key, client, attempt+1)
+                self.retry_background_delete(key, client, attempt + 1)
         else:
             return
 
@@ -821,11 +821,11 @@ class CustomClient(Client):
                                   eventual=eventual, model_type=model_type)
         if entities:
             end = datetime.datetime.now()
-            print('Time taken for get {}'.format(end-start))
+            print('Time taken for get {}'.format(end - start))
             return entities[0]
 
     def get_multi(self, keys, missing=None, deferred=None,
-                  transaction=None, eventual=False, model_type=None):
+                  transaction=None, eventual=False, model_type=None, expiry=86400):
         """Retrieve entities, along with their attributes.
 
         :type keys: list of :class:`google.cloud.datastore.key.Key`
@@ -860,7 +860,7 @@ class CustomClient(Client):
         if not keys:
             return []
         get_multi_partial = partial(self.get_single, missing=missing, deferred=deferred, transaction=transaction,
-                                    eventual=eventual, model_type=model_type)
+                                    eventual=eventual, model_type=model_type, expiry=86400)
         with ThreadPoolExecutor(max_workers=min(len(keys), 10)) as executor:
             basemodels = []
             map_iterator = [[key] for key in keys]
@@ -870,7 +870,7 @@ class CustomClient(Client):
             return basemodels
 
     def get_single(self, keys, missing=None, deferred=None,
-                   transaction=None, eventual=False, model_type=None):
+                   transaction=None, eventual=False, model_type=None, expiry=86400):
         cache_key = 'datastore_orm.{}.{}'.format(keys[0].kind, keys[0].id_or_name)
         try:
             if self._cache:
@@ -912,7 +912,7 @@ class CustomClient(Client):
                       for entity_pb in entity_pbs]
         try:
             if self._cache and basemodels:
-                self._cache.set(cache_key, pickle.dumps(basemodels[0]))
+                self._cache.set(cache_key, pickle.dumps(basemodels[0]), expiry)
         except:
             pass
         return basemodels

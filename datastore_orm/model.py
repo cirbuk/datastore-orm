@@ -203,6 +203,9 @@ class CustomIterator(Iterator):
             start_cursor=None,
             end_cursor=None,
             eventual=False,
+            retry=None,
+            timeout=None,
+            read_time=None
     ):
         super(Iterator, self).__init__(
             client=client,
@@ -216,6 +219,9 @@ class CustomIterator(Iterator):
         self._offset = offset
         self._end_cursor = end_cursor
         self._eventual = eventual
+        self._retry = retry
+        self._timeout = timeout
+        self._read_time = read_time
         # The attributes below will change over the life of the iterator.
         self._more_results = True
         self._skipped_results = 0
@@ -453,6 +459,9 @@ class CustomQuery(Query):
             end_cursor=None,
             client=None,
             eventual=False,
+            retry=None,
+            timeout=None,
+            read_time=None,
     ):
         """Execute the Query; return an iterator for the matching entities.
 
@@ -489,6 +498,23 @@ class CustomQuery(Query):
                                     but cannot be used inside a transaction or
                                     will raise ValueError.
 
+        :type retry: `google.api_core.retry.Retry`
+        :param retry: (Optional) A retry object used to retry requests. If None is
+                                    specified, requests will be retried using a
+                                    default configuration.
+        :type timeout: float
+        :param timeout: (Optional) Time, in seconds, to wait for the request to
+                                    complete. Note that if retry is specified,
+                                    the timeout applies to each individual attempt.
+
+        :type read_time: datetime
+        :param read_time: (Optional) Runs the query with read time consistency.
+                                        Cannot be used with eventual consistency or
+                                        inside a transaction, otherwise will raise
+                                        ValueError. This feature is in private preview.
+
+
+
         :rtype: :class:`Iterator`
         :returns: The iterator for the query.
         """
@@ -503,7 +529,10 @@ class CustomQuery(Query):
             offset=offset,
             start_cursor=start_cursor,
             end_cursor=end_cursor,
-            eventual=eventual
+            eventual=eventual,
+            retry=retry,
+            timeout=timeout,
+            read_time=read_time
         )
 
 
@@ -777,7 +806,7 @@ class CustomClient(Client):
                                            credentials=self._client._credentials)
 
     def get(self, key, missing=None, deferred=None,
-            transaction=None, eventual=False, model_type=None):
+            transaction=None, eventual=False, retry=None, timeout=None, read_time=None, model_type=None):
         """Retrieve an entity from a single key (if it exists).
 
         .. note::
@@ -808,6 +837,21 @@ class CustomClient(Client):
                          Setting True will use eventual consistency, but cannot
                          be used inside a transaction or will raise ValueError.
 
+        :type retry: `google.api_core.retry.Retry`
+        :param retry: (Optional) A retry object used to retry requests. If None is
+                                    specified, requests will be retried using a
+                                    default configuration.
+        :type timeout: float
+        :param timeout: (Optional) Time, in seconds, to wait for the request to
+                                    complete. Note that if retry is specified,
+                                    the timeout applies to each individual attempt.
+
+        :type read_time: datetime
+        :param read_time: (Optional) Runs the query with read time consistency.
+                                        Cannot be used with eventual consistency or
+                                        inside a transaction, otherwise will raise
+                                        ValueError. This feature is in private preview.
+
         :rtype: :class:`google.cloud.datastore.entity.Entity` or ``NoneType``
         :returns: The requested entity if it exists.
 
@@ -818,14 +862,19 @@ class CustomClient(Client):
                                   missing=missing,
                                   deferred=deferred,
                                   transaction=transaction,
-                                  eventual=eventual, model_type=model_type)
+                                  eventual=eventual,
+                                  retry=retry,
+                                  timeout=timeout,
+                                  read_time=read_time,
+                                  model_type=model_type)
         if entities:
             end = datetime.datetime.now()
             print('Time taken for get {}'.format(end - start))
             return entities[0]
 
     def get_multi(self, keys, missing=None, deferred=None,
-                  transaction=None, eventual=False, model_type=None, expiry=86400):
+                  transaction=None, eventual=False, retry=None, timeout=None, read_time=None,
+                  model_type=None, expiry=86400):
         """Retrieve entities, along with their attributes.
 
         :type keys: list of :class:`google.cloud.datastore.key.Key`
@@ -850,6 +899,20 @@ class CustomClient(Client):
         :param eventual: (Optional) Defaults to strongly consistent (False).
                          Setting True will use eventual consistency, but cannot
                          be used inside a transaction or will raise ValueError.
+        :type retry: `google.api_core.retry.Retry`
+        :param retry: (Optional) A retry object used to retry requests. If None is
+                                    specified, requests will be retried using a
+                                    default configuration.
+        :type timeout: float
+        :param timeout: (Optional) Time, in seconds, to wait for the request to
+                                    complete. Note that if retry is specified,
+                                    the timeout applies to each individual attempt.
+
+        :type read_time: datetime
+        :param read_time: (Optional) Runs the query with read time consistency.
+                                        Cannot be used with eventual consistency or
+                                        inside a transaction, otherwise will raise
+                                        ValueError. This feature is in private preview.
 
         :rtype: list of :class:`google.cloud.datastore.entity.Entity`
         :returns: The requested entities.

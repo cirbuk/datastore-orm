@@ -4,7 +4,7 @@ from distutils.core import setup
 import setuptools
 
 setup(name='datastore-orm',
-      version='2.0.1',
+      version='2.0.2',
       description='datastore-orm wraps google-cloud-datastore in a lightweight ORM and helps you easily migrate away from NDB',
       author='Chaitanya Nettem',
       author_email='chaitanya@kubric.io',

@@ -1,6 +1,7 @@
 from google.cloud import datastore
 from google.cloud.datastore import Query, Client
 from google.cloud.datastore.query import Iterator
+from google.cloud.datastore_v1.types import entity as entity_pb2
 from google.cloud.datastore import helpers
 from google.cloud.datastore import Key
 import datetime
@@ -38,10 +39,34 @@ def get_custom_key_from_key(key):
     return key_custom
 
 
-def _extended_lookup(datastore_api, project, key_pbs,
-                     missing=None, deferred=None,
-                     eventual=False, transaction_id=None):
-    """Repeat lookup until all keys found (unless stop requested).
+def _make_retry_timeout_kwargs(retry, timeout):
+    """Helper: make optional retry / timeout kwargs dict."""
+    kwargs = {}
+
+    if retry is not None:
+        kwargs["retry"] = retry
+
+    if timeout is not None:
+        kwargs["timeout"] = timeout
+
+    return kwargs
+
+
+def _extended_lookup(
+        datastore_api,
+        project,
+        key_pbs,
+        missing=None,
+        deferred=None,
+        eventual=False,
+        transaction_id=None,
+        retry=None,
+        timeout=None,
+        read_time=None,
+):
+    """
+    Refers to google.cloud.datastore.client.py : _extended_lookup
+    Repeat lookup until all keys found (unless stop requested).
 
     Helper function for :meth:`Client.get_multi`.
 
@@ -76,6 +101,23 @@ def _extended_lookup(datastore_api, project, key_pbs,
                            the given transaction.  Incompatible with
                            ``eventual==True``.
 
+        :type retry: :class:`google.api_core.retry.Retry`
+    :param retry:
+        A retry object used to retry requests. If ``None`` is specified,
+        requests will be retried using a default configuration.
+
+    :type timeout: float
+    :param timeout:
+        Time, in seconds, to wait for the request to complete.
+        Note that if ``retry`` is specified, the timeout applies
+        to each individual attempt.
+
+    :type read_time: datetime
+    :param read_time:
+        (Optional) Read time to use for read consistency. Incompatible with
+        ``eventual==True`` or ``transaction_id``.
+        This feature is in private preview.
+
     :rtype: list of :class:`.entity_pb2.Entity`
     :returns: The requested entities.
     :raises: :class:`ValueError` if missing / deferred are not null or
@@ -87,16 +129,20 @@ def _extended_lookup(datastore_api, project, key_pbs,
     if deferred is not None and deferred != []:
         raise ValueError('deferred must be None or an empty list')
 
+    kwargs = _make_retry_timeout_kwargs(retry, timeout)
     results = []
 
     loop_num = 0
-    read_options = helpers.get_read_options(eventual, transaction_id)
+    read_options = helpers.get_read_options(eventual, transaction_id, read_time)
     while loop_num < _MAX_LOOPS:  # loop against possible deferred.
         loop_num += 1
         lookup_response = datastore_api.lookup(
-            project,
-            key_pbs,
-            read_options=read_options,
+            request={
+                "project_id": project,
+                "keys": key_pbs,
+                "read_options": read_options,
+            },
+            **kwargs,
         )
 
         # Accumulate the new results.
@@ -203,6 +249,9 @@ class CustomIterator(Iterator):
             start_cursor=None,
             end_cursor=None,
             eventual=False,
+            retry=None,
+            timeout=None,
+            read_time=None
     ):
         super(Iterator, self).__init__(
             client=client,
@@ -216,6 +265,9 @@ class CustomIterator(Iterator):
         self._offset = offset
         self._end_cursor = end_cursor
         self._eventual = eventual
+        self._retry = retry
+        self._timeout = timeout
+        self._read_time = read_time
         # The attributes below will change over the life of the iterator.
         self._more_results = True
         self._skipped_results = 0
@@ -234,13 +286,16 @@ class CustomIterator(Iterator):
         :returns: The entity derived from the protobuf.
         """
         key = None
+        if isinstance(pb, entity_pb2.Entity):
+            pb = pb._pb
+
         if pb.HasField("key"):  # Message field (Key)
             key = CustomIterator.key_from_protobuf(pb.key)
             key._type = SubclassMap.get()[key.kind]
 
         entity_props = {}
 
-        for prop_name, value_pb in helpers._property_tuples(pb):
+        for prop_name, value_pb in pb.properties.items():
             value = CustomIterator._get_value_from_value_pb(value_pb)
             entity_props[prop_name] = value
 
@@ -453,6 +508,9 @@ class CustomQuery(Query):
             end_cursor=None,
             client=None,
             eventual=False,
+            retry=None,
+            timeout=None,
+            read_time=None,
     ):
         """Execute the Query; return an iterator for the matching entities.
 
@@ -489,6 +547,23 @@ class CustomQuery(Query):
                                     but cannot be used inside a transaction or
                                     will raise ValueError.
 
+        :type retry: `google.api_core.retry.Retry`
+        :param retry: (Optional) A retry object used to retry requests. If None is
+                                    specified, requests will be retried using a
+                                    default configuration.
+        :type timeout: float
+        :param timeout: (Optional) Time, in seconds, to wait for the request to
+                                    complete. Note that if retry is specified,
+                                    the timeout applies to each individual attempt.
+
+        :type read_time: datetime
+        :param read_time: (Optional) Runs the query with read time consistency.
+                                        Cannot be used with eventual consistency or
+                                        inside a transaction, otherwise will raise
+                                        ValueError. This feature is in private preview.
+
+
+
         :rtype: :class:`Iterator`
         :returns: The iterator for the query.
         """
@@ -503,7 +578,10 @@ class CustomQuery(Query):
             offset=offset,
             start_cursor=start_cursor,
             end_cursor=end_cursor,
-            eventual=eventual
+            eventual=eventual,
+            retry=retry,
+            timeout=timeout,
+            read_time=read_time
         )
 
 
@@ -777,7 +855,7 @@ class CustomClient(Client):
                                            credentials=self._client._credentials)
 
     def get(self, key, missing=None, deferred=None,
-            transaction=None, eventual=False, model_type=None):
+            transaction=None, eventual=False, retry=None, timeout=None, read_time=None, model_type=None):
         """Retrieve an entity from a single key (if it exists).
 
         .. note::
@@ -808,6 +886,21 @@ class CustomClient(Client):
                          Setting True will use eventual consistency, but cannot
                          be used inside a transaction or will raise ValueError.
 
+        :type retry: `google.api_core.retry.Retry`
+        :param retry: (Optional) A retry object used to retry requests. If None is
+                                    specified, requests will be retried using a
+                                    default configuration.
+        :type timeout: float
+        :param timeout: (Optional) Time, in seconds, to wait for the request to
+                                    complete. Note that if retry is specified,
+                                    the timeout applies to each individual attempt.
+
+        :type read_time: datetime
+        :param read_time: (Optional) Runs the query with read time consistency.
+                                        Cannot be used with eventual consistency or
+                                        inside a transaction, otherwise will raise
+                                        ValueError. This feature is in private preview.
+
         :rtype: :class:`google.cloud.datastore.entity.Entity` or ``NoneType``
         :returns: The requested entity if it exists.
 
@@ -818,14 +911,19 @@ class CustomClient(Client):
                                   missing=missing,
                                   deferred=deferred,
                                   transaction=transaction,
-                                  eventual=eventual, model_type=model_type)
+                                  eventual=eventual,
+                                  retry=retry,
+                                  timeout=timeout,
+                                  read_time=read_time,
+                                  model_type=model_type)
         if entities:
             end = datetime.datetime.now()
             print('Time taken for get {}'.format(end - start))
             return entities[0]
 
     def get_multi(self, keys, missing=None, deferred=None,
-                  transaction=None, eventual=False, model_type=None, expiry=86400):
+                  transaction=None, eventual=False, retry=None, timeout=None, read_time=None,
+                  model_type=None, expiry=86400):
         """Retrieve entities, along with their attributes.
 
         :type keys: list of :class:`google.cloud.datastore.key.Key`
@@ -850,6 +948,20 @@ class CustomClient(Client):
         :param eventual: (Optional) Defaults to strongly consistent (False).
                          Setting True will use eventual consistency, but cannot
                          be used inside a transaction or will raise ValueError.
+        :type retry: `google.api_core.retry.Retry`
+        :param retry: (Optional) A retry object used to retry requests. If None is
+                                    specified, requests will be retried using a
+                                    default configuration.
+        :type timeout: float
+        :param timeout: (Optional) Time, in seconds, to wait for the request to
+                                    complete. Note that if retry is specified,
+                                    the timeout applies to each individual attempt.
+
+        :type read_time: datetime
+        :param read_time: (Optional) Runs the query with read time consistency.
+                                        Cannot be used with eventual consistency or
+                                        inside a transaction, otherwise will raise
+                                        ValueError. This feature is in private preview.
 
         :rtype: list of :class:`google.cloud.datastore.entity.Entity`
         :returns: The requested entities.
@@ -860,7 +972,8 @@ class CustomClient(Client):
         if not keys:
             return []
         get_multi_partial = partial(self.get_single, missing=missing, deferred=deferred, transaction=transaction,
-                                    eventual=eventual, model_type=model_type, expiry=86400)
+                                    eventual=eventual, retry=retry, timeout=timeout, read_time=read_time,
+                                    model_type=model_type, expiry=86400)
         with ThreadPoolExecutor(max_workers=min(len(keys), 10)) as executor:
             basemodels = []
             map_iterator = [[key] for key in keys]
@@ -870,7 +983,8 @@ class CustomClient(Client):
             return basemodels
 
     def get_single(self, keys, missing=None, deferred=None,
-                   transaction=None, eventual=False, model_type=None, expiry=86400):
+                   transaction=None, eventual=False, model_type=None, retry=None, timeout=None,
+                   read_time=None, expiry=86400):
         cache_key = 'datastore_orm.{}.{}'.format(keys[0].kind, keys[0].id_or_name)
         try:
             if self._cache:
@@ -896,6 +1010,9 @@ class CustomClient(Client):
             missing=missing,
             deferred=deferred,
             transaction_id=transaction and transaction.id,
+            retry=retry,
+            timeout=timeout,
+            read_time=read_time,
         )
 
         if missing is not None:
@@ -908,7 +1025,7 @@ class CustomClient(Client):
                 CustomIterator.key_from_protobuf(deferred_pb)
                 for deferred_pb in deferred]
 
-        basemodels = [CustomIterator.object_from_protobuf(entity_pb, model_type=model_type)
+        basemodels = [CustomIterator.object_from_protobuf(entity_pb._pb, model_type=model_type)
                       for entity_pb in entity_pbs]
         try:
             if self._cache and basemodels:

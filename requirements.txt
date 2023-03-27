@@ -1,2 +1,2 @@
 google-cloud-datastore==2.8.1
-redis==3.5.3
+redis==4.5.3

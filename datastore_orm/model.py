@@ -409,7 +409,6 @@ class CustomKey(Key):
     _clients: List[datastore.Client]  # list of all clients (writes occur to all clients)
     _type: object
     _cache: StrictRedis
-    logger: logging
 
     def __init__(self, *path_args, **kwargs):
         if not getattr(self, '_client', None):
@@ -420,16 +419,12 @@ class CustomKey(Key):
             kwargs['project'] = self._client.project
         super(CustomKey, self).__init__(*path_args, **kwargs)
         self._type = SubclassMap.get()[self.kind]
-        # Set logger passed in input, else use default logging
-        self.logger = kwargs.get("logger") if kwargs.get("logger") else logging
 
     @classmethod
-    def __initialize_class__(cls, clients=None, cache=None, logger=None):
+    def __initialize_class__(cls, clients=None, cache=None):
         cls._clients = clients
         cls._client = clients[0]
         cls._cache = cache
-        if logger:
-            cls.logger = logger
 
     # use_cache should be passed as False if another process is writing to the same entity in Datastore
     def get(self, use_cache=True, expiry=86400):
@@ -472,7 +467,7 @@ class CustomKey(Key):
             try:
                 client.delete(key)
             except:
-                self.logger.warning(F"Failed to delete from datastore in background in attempt {attempt}, retrying.")
+                logging.warning(F"Failed to delete from datastore in background in attempt {attempt}, retrying.")
                 self.retry_background_delete(key, client, attempt + 1)
         else:
             return
@@ -601,16 +596,13 @@ class BaseModel(metaclass=abc.ABCMeta):
     _clients: List[datastore.Client]
     _exclude_from_indexes_: tuple
     _cache: StrictRedis
-    logger: logging
 
     @classmethod
-    def __init__(cls, clients=None, cache=None, logger=None):
+    def __init__(cls, clients=None, cache=None):
         cls._exclude_from_indexes_ = tuple()
         cls._clients = clients
         cls._client = clients[0]
         cls._cache = cache
-        if logger:
-            cls.logger = logger
 
     def dottify(self, base_name):
         """Convert a standard BaseModel object with nested objects into dot notation to maintain
@@ -779,7 +771,7 @@ class BaseModel(metaclass=abc.ABCMeta):
             try:
                 client.put(entity)
             except:
-                self.logger.warning(F"Failed to write to datastore in background in attempt {attempt}, retrying.")
+                logging.warning(F"Failed to write to datastore in background in attempt {attempt}, retrying.")
                 self.retry_background_write(entity, client, attempt + 1)
         else:
             return
@@ -803,7 +795,7 @@ class BaseModel(metaclass=abc.ABCMeta):
             try:
                 client.delete(key)
             except:
-                self.logger.warning(F"Failed to delete from datastore in background in attempt {attempt}, retrying.")
+                logging.warning(F"Failed to delete from datastore in background in attempt {attempt}, retrying.")
                 self.retry_background_delete(key, client, attempt + 1)
         else:
             return
@@ -1043,7 +1035,7 @@ class CustomClient(Client):
         return basemodels
 
 
-def initialize(clients, cache=None, logger=None):
+def initialize(clients, cache=None):
     if not isinstance(clients, list):
         clients = [clients]
 
@@ -1051,5 +1043,5 @@ def initialize(clients, cache=None, logger=None):
     for client in clients:
         orm_clients.append(CustomClient(client=client, cache=cache))
 
-    BaseModel(orm_clients, cache, logger=logger)
-    CustomKey.__initialize_class__(orm_clients, cache, logger=logger)
+    BaseModel(orm_clients, cache)
+    CustomKey.__initialize_class__(orm_clients, cache)

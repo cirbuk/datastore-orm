@@ -409,6 +409,7 @@ class CustomKey(Key):
     _clients: List[datastore.Client]  # list of all clients (writes occur to all clients)
     _type: object
     _cache: StrictRedis
+    logger: logging
 
     def __init__(self, *path_args, **kwargs):
         if not getattr(self, '_client', None):
@@ -423,10 +424,12 @@ class CustomKey(Key):
         self.logger = kwargs.get("logger") if kwargs.get("logger") else logging
 
     @classmethod
-    def __initialize_class__(cls, clients=None, cache=None):
+    def __initialize_class__(cls, clients=None, cache=None, logger=None):
         cls._clients = clients
         cls._client = clients[0]
         cls._cache = cache
+        if logger:
+            cls.logger = logger
 
     # use_cache should be passed as False if another process is writing to the same entity in Datastore
     def get(self, use_cache=True, expiry=86400):
@@ -1040,7 +1043,7 @@ class CustomClient(Client):
         return basemodels
 
 
-def initialize(clients, cache=None):
+def initialize(clients, cache=None, logger=None):
     if not isinstance(clients, list):
         clients = [clients]
 
@@ -1048,5 +1051,5 @@ def initialize(clients, cache=None):
     for client in clients:
         orm_clients.append(CustomClient(client=client, cache=cache))
 
-    BaseModel(orm_clients, cache)
-    CustomKey.__initialize_class__(orm_clients, cache)
+    BaseModel(orm_clients, cache, logger=logger)
+    CustomKey.__initialize_class__(orm_clients, cache, logger=logger)

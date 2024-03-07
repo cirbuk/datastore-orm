@@ -419,6 +419,8 @@ class CustomKey(Key):
             kwargs['project'] = self._client.project
         super(CustomKey, self).__init__(*path_args, **kwargs)
         self._type = SubclassMap.get()[self.kind]
+        # Set logger passed in input, else use default logging
+        self.logger = kwargs.get("logger") if kwargs.get("logger") else logging
 
     @classmethod
     def __initialize_class__(cls, clients=None, cache=None):
@@ -467,7 +469,7 @@ class CustomKey(Key):
             try:
                 client.delete(key)
             except:
-                logging.warning(F"Failed to delete from datastore in background in attempt {attempt}, retrying.")
+                self.logger.warning(F"Failed to delete from datastore in background in attempt {attempt}, retrying.")
                 self.retry_background_delete(key, client, attempt + 1)
         else:
             return
@@ -485,7 +487,7 @@ class CustomKey(Key):
         self._clients[0].delete(self)
 
     def get_multi(self, keys):
-        objects = self._client.get_multi(keys, model_type=self._type)
+        objects = self._client.get_multi(keys, model_type=self._type, timeout=30)
         return objects
 
 
@@ -596,13 +598,16 @@ class BaseModel(metaclass=abc.ABCMeta):
     _clients: List[datastore.Client]
     _exclude_from_indexes_: tuple
     _cache: StrictRedis
+    logger: logging
 
     @classmethod
-    def __init__(cls, clients=None, cache=None):
+    def __init__(cls, clients=None, cache=None, logger=None):
         cls._exclude_from_indexes_ = tuple()
         cls._clients = clients
         cls._client = clients[0]
         cls._cache = cache
+        if logger:
+            cls.logger = logger
 
     def dottify(self, base_name):
         """Convert a standard BaseModel object with nested objects into dot notation to maintain
@@ -771,7 +776,7 @@ class BaseModel(metaclass=abc.ABCMeta):
             try:
                 client.put(entity)
             except:
-                logging.warning(F"Failed to write to datastore in background in attempt {attempt}, retrying.")
+                self.logger.warning(F"Failed to write to datastore in background in attempt {attempt}, retrying.")
                 self.retry_background_write(entity, client, attempt + 1)
         else:
             return
@@ -795,7 +800,7 @@ class BaseModel(metaclass=abc.ABCMeta):
             try:
                 client.delete(key)
             except:
-                logging.warning(F"Failed to delete from datastore in background in attempt {attempt}, retrying.")
+                self.logger.warning(F"Failed to delete from datastore in background in attempt {attempt}, retrying.")
                 self.retry_background_delete(key, client, attempt + 1)
         else:
             return

@@ -485,7 +485,7 @@ class CustomKey(Key):
         self._clients[0].delete(self)
 
     def get_multi(self, keys):
-        objects = self._client.get_multi(keys, model_type=self._type)
+        objects = self._client.get_multi(keys, model_type=self._type, timeout=30)
         return objects
 
 

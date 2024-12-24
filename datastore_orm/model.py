@@ -417,6 +417,8 @@ class CustomKey(Key):
             kwargs['namespace'] = self._client.namespace
         if not kwargs.get('project'):
             kwargs['project'] = self._client.project
+        if not kwargs.get("database"):
+            kwargs['database'] = self._client.database
         super(CustomKey, self).__init__(*path_args, **kwargs)
         self._type = SubclassMap.get()[self.kind]
 

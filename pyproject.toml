@@ -7,8 +7,10 @@ name = "datastore-orm"
 version = "3.0.0"
 description = "datastore-orm wraps google-cloud-datastore in a lightweight ORM and helps you easily migrate away from NDB"
 authors = [{ name = "Chaitanya Nettem", email = "chaitanya@kubric.io" }]
-homepage = "https://github.com/cirbuk/datastore-orm"
+
 dependencies = ["google-cloud-datastore>=2.8.1,<=2.20.2"]
 
-[project.urls]
-"Homepage" = "https://github.com/cirbuk/datastore-orm"
+urls = {"HomePage" = "https://github.com/cirbuk/datastore-orm"}
+
+[tool.setuptools]
+packages = ["datastore_orm"]

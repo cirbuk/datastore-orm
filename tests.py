@@ -46,7 +46,7 @@ class Car(BaseModel):
 
     @classmethod
     def _factory(cls):
-        cls._class_mapping = Car(str(uuid4()), CustomKey('User', 'test@test.com', project=CustomKey._client.project),
+        cls._class_mapping = Car(str(uuid4()), CustomKey('Car', 'test@test.com', project=CustomKey._client.project),
                                  Brand._factory(), [Price._factory()])
         return cls._class_mapping
 
